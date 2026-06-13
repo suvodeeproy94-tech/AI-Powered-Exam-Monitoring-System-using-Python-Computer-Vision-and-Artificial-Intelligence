@@ -31,6 +31,18 @@ def boxes_overlap_ratio(face_box, hand_box):
     return intersection_area / face_area
 
 
+def count_landmarks_inside_box(landmark_points, box):
+    """Count hand landmark points that are inside one face box."""
+    box_x, box_y, box_width, box_height = box
+    box_right = box_x + box_width
+    box_bottom = box_y + box_height
+    return sum(
+        1
+        for point_x, point_y in landmark_points
+        if box_x <= point_x <= box_right and box_y <= point_y <= box_bottom
+    )
+
+
 class BehaviorMonitor:
     """Track suspicious conditions and send confirmed events to AlertManager."""
 
@@ -121,9 +133,15 @@ class BehaviorMonitor:
         )
 
         if face_missing:
+            quality_hint = ""
+            if face_results.get("is_low_light"):
+                quality_hint = " Improve the room lighting or face the light source."
+            elif face_results.get("is_blurry"):
+                quality_hint = " Keep the camera and your face steady."
             alert = self.alert_manager.critical(
                 "FACE_MISSING",
-                "No face is visible. The student may have left the camera frame.",
+                "No face is visible. The student may have left the camera frame."
+                + quality_hint,
             )
             fired_alerts.extend(
                 self._record_violation(alert, "face_missing_violations")
@@ -192,18 +210,32 @@ class BehaviorMonitor:
         """Alert when a hand covers a meaningful part of a visible face."""
         face_boxes = face_results.get("face_bboxes", [])
         hand_boxes = hand_results.get("hand_bboxes", [])
+        hand_landmark_groups = hand_results.get("hand_landmark_points", [])
         largest_overlap = 0.0
+        largest_landmark_count = 0
 
         for face_box in face_boxes:
-            for hand_box in hand_boxes:
-                largest_overlap = max(
-                    largest_overlap,
-                    boxes_overlap_ratio(face_box, hand_box),
+            for hand_index, hand_box in enumerate(hand_boxes):
+                overlap = boxes_overlap_ratio(face_box, hand_box)
+                landmark_points = (
+                    hand_landmark_groups[hand_index]
+                    if hand_index < len(hand_landmark_groups)
+                    else []
                 )
+                landmark_count = count_landmarks_inside_box(
+                    landmark_points, face_box
+                )
+                is_covering = (
+                    overlap >= self.settings.face_cover_overlap_ratio
+                    and landmark_count >= self.settings.hand_cover_min_landmarks
+                )
+                if is_covering and overlap > largest_overlap:
+                    largest_overlap = overlap
+                    largest_landmark_count = landmark_count
 
         confirmed = self._condition_is_confirmed(
             "hand_covering_face",
-            largest_overlap >= self.settings.face_cover_overlap_ratio,
+            largest_overlap > 0.0,
             self.settings.hand_cover_frames,
         )
         if not confirmed:
@@ -211,7 +243,8 @@ class BehaviorMonitor:
 
         alert = self.alert_manager.warning(
             "HAND_COVERING_FACE",
-            f"A hand is covering about {largest_overlap:.0%} of the face area.",
+            f"A hand is covering about {largest_overlap:.0%} of the face area "
+            f"with {largest_landmark_count} hand points over the face.",
         )
         return self._record_violation(alert, "hand_cover_violations")
 
@@ -233,10 +266,10 @@ class BehaviorMonitor:
 
     def _check_frequent_movement(self, face_results):
         """Alert when the student's face position changes rapidly and repeatedly."""
-        movement = face_results.get("face_movement", 0.0)
+        movement_ratio = face_results.get("face_movement_ratio", 0.0)
         moving_frequently = (
             face_results.get("face_count", 0) == 1
-            and movement >= self.settings.face_movement_threshold
+            and movement_ratio >= self.settings.face_movement_ratio_threshold
         )
         confirmed = self._condition_is_confirmed(
             "frequent_movement",
@@ -278,11 +311,21 @@ class BehaviorMonitor:
         """Prepare short status text values for the dashboard."""
         face_count = face_results.get("face_count", 0)
         if face_count == 0:
-            self.face_status = "No face"
+            if face_results.get("is_low_light"):
+                self.face_status = "No face - low light"
+            elif face_results.get("is_blurry"):
+                self.face_status = "No face - blurry"
+            else:
+                self.face_status = "No face"
         elif face_count == 1 and face_results.get("face_outside_frame"):
             self.face_status = "Near frame edge"
         elif face_count == 1:
-            self.face_status = "Face detected"
+            if face_results.get("is_low_light"):
+                self.face_status = "Face detected - low light"
+            elif face_results.get("is_blurry"):
+                self.face_status = "Face detected - blurry"
+            else:
+                self.face_status = "Face detected"
         else:
             self.face_status = f"{face_count} faces"
 

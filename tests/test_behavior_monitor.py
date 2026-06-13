@@ -4,7 +4,11 @@ import unittest
 
 from config import AppSettings
 from monitoring.alert_manager import AlertLevel, AlertManager
-from monitoring.behavior_monitor import BehaviorMonitor, boxes_overlap_ratio
+from monitoring.behavior_monitor import (
+    BehaviorMonitor,
+    boxes_overlap_ratio,
+    count_landmarks_inside_box,
+)
 
 
 def normal_face_results():
@@ -15,6 +19,7 @@ def normal_face_results():
         "face_outside_frame": False,
         "is_looking_away": False,
         "face_movement": 0.0,
+        "face_movement_ratio": 0.0,
     }
 
 
@@ -24,6 +29,7 @@ def normal_hand_results():
         "hand_count": 0,
         "hand_bboxes": [],
         "hand_labels": [],
+        "hand_landmark_points": [],
         "excessive_movement": False,
     }
 
@@ -84,12 +90,29 @@ class BehaviorMonitorTests(unittest.TestCase):
         hand_results = normal_hand_results()
         hand_results["hand_count"] = 1
         hand_results["hand_bboxes"] = [(110, 110, 90, 90)]
+        hand_results["hand_landmark_points"] = [
+            [(130, 130) for _ in range(21)]
+        ]
 
         self.monitor.analyse(normal_face_results(), hand_results, [])
         alerts = self.monitor.analyse(normal_face_results(), hand_results, [])
 
         event_types = [alert.event_type for alert in alerts]
         self.assertIn("HAND_COVERING_FACE", event_types)
+
+    def test_overlapping_box_without_face_landmarks_is_not_a_cover(self):
+        hand_results = normal_hand_results()
+        hand_results["hand_count"] = 1
+        hand_results["hand_bboxes"] = [(110, 110, 90, 90)]
+        hand_results["hand_landmark_points"] = [
+            [(260, 260) for _ in range(21)]
+        ]
+
+        self.monitor.analyse(normal_face_results(), hand_results, [])
+        alerts = self.monitor.analyse(normal_face_results(), hand_results, [])
+
+        event_types = [alert.event_type for alert in alerts]
+        self.assertNotIn("HAND_COVERING_FACE", event_types)
 
     def test_suspicious_gesture_needs_two_frames(self):
         gesture_results = [
@@ -118,6 +141,11 @@ class BehaviorMonitorTests(unittest.TestCase):
     def test_box_overlap_uses_face_area(self):
         overlap = boxes_overlap_ratio((0, 0, 100, 100), (0, 0, 50, 100))
         self.assertEqual(overlap, 0.5)
+
+    def test_landmarks_inside_face_box_are_counted(self):
+        landmark_points = [(20, 20), (40, 40), (120, 120)]
+        count = count_landmarks_inside_box(landmark_points, (0, 0, 100, 100))
+        self.assertEqual(count, 2)
 
 
 if __name__ == "__main__":

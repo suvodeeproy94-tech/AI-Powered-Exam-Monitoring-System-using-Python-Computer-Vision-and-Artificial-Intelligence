@@ -47,6 +47,9 @@ class AppSettings:
     hand_detection_confidence: float = 0.60
     hand_tracking_confidence: float = 0.55
     max_hands: int = 2
+    enhance_low_light: bool = True
+    low_light_threshold: float = 90.0
+    blur_threshold: float = 45.0
 
     expected_face_count: int = 1
     face_missing_frames: int = 12
@@ -57,12 +60,20 @@ class AppSettings:
     edge_margin_ratio: float = 0.03
 
     hand_movement_threshold: float = 40.0
+    hand_movement_ratio_threshold: float = 0.28
     excessive_hand_frames: int = 8
     hand_cover_frames: int = 5
+    hand_cover_min_landmarks: int = 5
     face_movement_threshold: float = 35.0
+    face_movement_ratio_threshold: float = 0.18
     frequent_movement_frames: int = 8
     face_cover_overlap_ratio: float = 0.25
     suspicious_gesture_frames: int = 4
+    gesture_history_frames: int = 7
+    gesture_stable_frames: int = 3
+    gesture_majority_ratio: float = 0.60
+    gesture_min_confidence: float = 0.58
+    minimum_face_area_ratio: float = 0.015
 
     alert_cooldown_seconds: float = 5.0
     logging_enabled: bool = True
@@ -80,6 +91,8 @@ class AppSettings:
         self.hand_detection_confidence = _clamp(self.hand_detection_confidence, 0.1, 1.0)
         self.hand_tracking_confidence = _clamp(self.hand_tracking_confidence, 0.1, 1.0)
         self.max_hands = max(1, min(2, int(self.max_hands)))
+        self.low_light_threshold = _clamp(self.low_light_threshold, 20.0, 180.0)
+        self.blur_threshold = max(1.0, float(self.blur_threshold))
 
         self.expected_face_count = max(1, int(self.expected_face_count))
         self.face_missing_frames = max(1, int(self.face_missing_frames))
@@ -90,12 +103,34 @@ class AppSettings:
         self.edge_margin_ratio = _clamp(self.edge_margin_ratio, 0.0, 0.20)
 
         self.hand_movement_threshold = max(1.0, float(self.hand_movement_threshold))
+        self.hand_movement_ratio_threshold = _clamp(
+            self.hand_movement_ratio_threshold, 0.02, 1.0
+        )
         self.excessive_hand_frames = max(1, int(self.excessive_hand_frames))
         self.hand_cover_frames = max(1, int(self.hand_cover_frames))
+        self.hand_cover_min_landmarks = max(
+            1, min(21, int(self.hand_cover_min_landmarks))
+        )
         self.face_movement_threshold = max(1.0, float(self.face_movement_threshold))
+        self.face_movement_ratio_threshold = _clamp(
+            self.face_movement_ratio_threshold, 0.02, 1.0
+        )
         self.frequent_movement_frames = max(1, int(self.frequent_movement_frames))
         self.face_cover_overlap_ratio = _clamp(self.face_cover_overlap_ratio, 0.05, 1.0)
         self.suspicious_gesture_frames = max(1, int(self.suspicious_gesture_frames))
+        self.gesture_history_frames = max(3, int(self.gesture_history_frames))
+        self.gesture_stable_frames = max(
+            1, min(self.gesture_history_frames, int(self.gesture_stable_frames))
+        )
+        self.gesture_majority_ratio = _clamp(
+            self.gesture_majority_ratio, 0.50, 1.0
+        )
+        self.gesture_min_confidence = _clamp(
+            self.gesture_min_confidence, 0.0, 1.0
+        )
+        self.minimum_face_area_ratio = _clamp(
+            self.minimum_face_area_ratio, 0.001, 0.25
+        )
         self.alert_cooldown_seconds = max(0.0, float(self.alert_cooldown_seconds))
         return self
 

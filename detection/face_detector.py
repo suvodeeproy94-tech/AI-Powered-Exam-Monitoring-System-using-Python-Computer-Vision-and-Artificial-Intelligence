@@ -51,6 +51,7 @@ class FaceDetector:
         self.face_bboxes = []
         self.last_results = self._empty_results()
         self._previous_face_center = None
+        self._smoothed_face_center = None
         self._last_timestamp_ms = 0
 
     def _check_model_files(self):
@@ -77,6 +78,7 @@ class FaceDetector:
             "look_away_ratio": 0.0,
             "face_center": None,
             "face_movement": 0.0,
+            "face_movement_ratio": 0.0,
         }
 
     def process_frame(self, frame):
@@ -110,24 +112,40 @@ class FaceDetector:
             raw_width = int(bounding_box.width)
             raw_height = int(bounding_box.height)
 
-            if self._is_near_frame_edge(
-                raw_x, raw_y, raw_width, raw_height, frame_width, frame_height
-            ):
-                face_outside_frame = True
-
             x = max(0, raw_x)
             y = max(0, raw_y)
             box_width = max(0, min(raw_width, frame_width - x))
             box_height = max(0, min(raw_height, frame_height - y))
 
-            if box_width > 0 and box_height > 0:
-                face_bboxes.append((x, y, box_width, box_height))
+            face_area_ratio = (
+                box_width * box_height / max(frame_width * frame_height, 1)
+            )
+            if (
+                box_width > 0
+                and box_height > 0
+                and face_area_ratio >= self.settings.minimum_face_area_ratio
+            ):
+                face_box = (x, y, box_width, box_height)
+                if self._is_near_frame_edge(
+                    raw_x,
+                    raw_y,
+                    raw_width,
+                    raw_height,
+                    frame_width,
+                    frame_height,
+                ):
+                    face_outside_frame = True
                 confidence = (
                     float(detection.categories[0].score)
                     if detection.categories
                     else 0.0
                 )
-                face_confidences.append(confidence)
+                self._append_distinct_face(
+                    face_bboxes,
+                    face_confidences,
+                    face_box,
+                    confidence,
+                )
 
         self.face_count = len(face_bboxes)
         self.face_bboxes = face_bboxes
@@ -152,7 +170,10 @@ class FaceDetector:
             )
 
         face_center = self._get_primary_face_center(face_bboxes)
-        face_movement = self._calculate_face_movement(face_center)
+        primary_face_box = self._get_primary_face_box(face_bboxes)
+        face_movement, face_movement_ratio = self._calculate_face_movement(
+            face_center, primary_face_box
+        )
         self._draw_face_boxes(
             annotated_frame,
             face_bboxes,
@@ -170,6 +191,7 @@ class FaceDetector:
             "look_away_ratio": round(look_away_ratio, 3),
             "face_center": face_center,
             "face_movement": round(face_movement, 2),
+            "face_movement_ratio": round(face_movement_ratio, 3),
         }
         return annotated_frame, self.last_results.copy()
 
@@ -201,24 +223,80 @@ class FaceDetector:
 
     def _get_primary_face_center(self, face_bboxes):
         """Return the center point of the largest visible face."""
-        if not face_bboxes:
+        primary_box = self._get_primary_face_box(face_bboxes)
+        if primary_box is None:
             return None
 
-        primary_box = max(face_bboxes, key=lambda box: box[2] * box[3])
         x, y, width, height = primary_box
         return (x + width // 2, y + height // 2)
 
-    def _calculate_face_movement(self, face_center):
-        """Measure how far the main face moved since the previous frame."""
+    def _get_primary_face_box(self, face_bboxes):
+        """Return the largest face box because it is normally the student."""
+        if not face_bboxes:
+            return None
+        return max(face_bboxes, key=lambda box: box[2] * box[3])
+
+    def _calculate_face_movement(self, face_center, face_box):
+        """Measure stable face movement relative to the visible face size."""
         if face_center is None:
             self._previous_face_center = None
-            return 0.0
+            self._smoothed_face_center = None
+            return 0.0, 0.0
+
+        if self._smoothed_face_center is None:
+            self._smoothed_face_center = face_center
+        else:
+            previous_x, previous_y = self._smoothed_face_center
+            current_x, current_y = face_center
+            smoothing_weight = 0.35
+            self._smoothed_face_center = (
+                previous_x + (current_x - previous_x) * smoothing_weight,
+                previous_y + (current_y - previous_y) * smoothing_weight,
+            )
 
         movement = 0.0
         if self._previous_face_center is not None:
-            movement = math.dist(face_center, self._previous_face_center)
-        self._previous_face_center = face_center
-        return movement
+            movement = math.dist(
+                self._smoothed_face_center, self._previous_face_center
+            )
+        self._previous_face_center = self._smoothed_face_center
+
+        if face_box is None:
+            return movement, 0.0
+        face_size = max(math.hypot(face_box[2], face_box[3]), 1.0)
+        return movement, movement / face_size
+
+    def _append_distinct_face(
+        self, face_boxes, face_confidences, new_box, new_confidence
+    ):
+        """Ignore a duplicate detection that strongly overlaps an existing face."""
+        for index, existing_box in enumerate(face_boxes):
+            if self._box_iou(existing_box, new_box) >= 0.60:
+                if new_confidence > face_confidences[index]:
+                    face_boxes[index] = new_box
+                    face_confidences[index] = new_confidence
+                return
+        face_boxes.append(new_box)
+        face_confidences.append(new_confidence)
+
+    def _box_iou(self, first_box, second_box):
+        """Return the shared area divided by the total area of two boxes."""
+        first_x, first_y, first_width, first_height = first_box
+        second_x, second_y, second_width, second_height = second_box
+        left = max(first_x, second_x)
+        top = max(first_y, second_y)
+        right = min(first_x + first_width, second_x + second_width)
+        bottom = min(first_y + first_height, second_y + second_height)
+        if right <= left or bottom <= top:
+            return 0.0
+
+        intersection_area = (right - left) * (bottom - top)
+        total_area = (
+            first_width * first_height
+            + second_width * second_height
+            - intersection_area
+        )
+        return intersection_area / max(total_area, 1)
 
     def _draw_face_contours(
         self, frame, face_landmark_groups, frame_width, frame_height

@@ -91,8 +91,9 @@ invigilator. It records visible events so the invigilator can review them.
 | Frame Position | Detects when the face stays near or outside a camera edge |
 | Look-Away Check | Uses nose position between both eyes as a simple head-turn estimate |
 | Hand Detection | Detects up to two hands and draws 21 landmarks and connections |
-| Hand Movement | Measures wrist movement between consecutive frames |
-| Gesture Recognition | Recognises Open Palm, Closed Fist, Pointing Finger, Victory Sign, Thumbs Up, Thumbs Down, Phone Gesture, and Unknown Gesture |
+| Camera Quality | Measures brightness and blur, and improves dark frames before detection |
+| Hand Movement | Measures wrist movement relative to hand size and smooths landmark noise |
+| Gesture Recognition | Uses finger joint angles, hand rotation support, and multi-frame voting for stable gesture labels |
 | Suspicious Activity | Checks face missing, multiple faces, looking away, hand covering face, fast hand movement, suspicious gestures, face outside frame, and frequent movement |
 | Alerts | Shows INFO, WARNING, and CRITICAL events with cooldown control |
 | Logging | Saves date, time, event type, alert type, and description to CSV |
@@ -595,9 +596,17 @@ recreate `.venv` with that version.
 ### Too Many False Alerts
 
 - Increase the missing-face confirmation frames.
-- Reduce face or hand detection confidence carefully.
+- Keep face and hand detection confidence near `0.60` before changing it.
 - Increase repeated-alert cooldown.
-- Improve lighting and keep the webcam stable.
+- Enable `Improve Detection in Low Light` in Settings.
+- Keep the full hand visible, including the wrist and fingertips.
+- Keep the camera stable and avoid strong light directly behind the student.
+- Clean the webcam lens and keep the face reasonably close to the camera.
+
+Gesture labels use several consecutive frames before changing. During fast hand
+motion, the dashboard may briefly keep the previous label or show
+`Unknown Gesture`. This is intentional because it prevents one blurred frame
+from creating a wrong gesture alert.
 
 ### PowerShell Blocks Virtual Environment Activation
 
@@ -637,6 +646,8 @@ files that need to be packaged correctly.
 - Look-away detection is a simple head-turn estimate, not full eye tracking.
 - Gesture confidence is rule-based, not a trained model probability.
 - Poor lighting, masks, camera blur, and low-quality webcams reduce accuracy.
+- No webcam-based computer vision system can guarantee perfect detection in
+  every room, camera angle, hand pose, or lighting condition.
 - The system does not identify who the detected face belongs to.
 - The current version does not record video or audio.
 - It does not provide a remote cloud dashboard.

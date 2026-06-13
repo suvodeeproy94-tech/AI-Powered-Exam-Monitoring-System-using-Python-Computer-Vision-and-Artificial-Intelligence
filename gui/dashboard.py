@@ -30,6 +30,7 @@ from config import (
     save_settings,
 )
 from detection.face_detector import FaceDetector
+from detection.frame_quality import prepare_detection_frame
 from detection.hand_detector import HandDetector
 from gui.components import AlertRow, StatusBadge
 from gui.settings_dialog import SettingsDialog
@@ -53,7 +54,7 @@ class Dashboard(ctk.CTk):
             logging_enabled=self.settings.logging_enabled,
         )
         self.behavior_monitor = BehaviorMonitor(self.alert_manager, self.settings)
-        self.gesture_recognizer = MultiHandGestureRecognizer()
+        self.gesture_recognizer = MultiHandGestureRecognizer(self.settings)
         self.report_generator = ReportGenerator()
 
         self.face_detector = None
@@ -333,6 +334,7 @@ class Dashboard(ctk.CTk):
             return
 
         self.behavior_monitor.reset_session()
+        self.gesture_recognizer.reset()
         self._stop_event.clear()
         self._monitoring = True
         self._start_button.configure(state="disabled")
@@ -378,13 +380,21 @@ class Dashboard(ctk.CTk):
                 if self.settings.mirror_camera:
                     frame = cv2.flip(frame, 1)
 
-                face_frame, face_results = self.face_detector.process_frame(frame)
+                detection_frame, quality_results = prepare_detection_frame(
+                    frame, self.settings
+                )
+                face_frame, face_results = self.face_detector.process_frame(
+                    detection_frame
+                )
+                face_results.update(quality_results)
                 annotated_frame, hand_results = self.hand_detector.process_frame(
-                    frame, face_frame
+                    detection_frame, face_frame
                 )
 
                 landmark_lists = [
-                    self.hand_detector.get_landmark_list(index, frame.shape)
+                    self.hand_detector.get_landmark_list(
+                        index, detection_frame.shape
+                    )
                     for index in range(hand_results["hand_count"])
                 ]
                 gesture_results = self.gesture_recognizer.recognize_all(
@@ -653,6 +663,7 @@ class Dashboard(ctk.CTk):
         self.alert_manager.cooldown_seconds = self.settings.alert_cooldown_seconds
         self.alert_manager.set_logging_enabled(self.settings.logging_enabled)
         self.behavior_monitor.settings = self.settings
+        self.gesture_recognizer = MultiHandGestureRecognizer(self.settings)
         messagebox.showinfo(
             "Settings Saved",
             "Settings were saved. Start monitoring to use the new values.",

@@ -1,52 +1,96 @@
-"""Tests for the beginner-friendly rule-based gesture recognizer."""
+"""Tests for rotation-independent and stable hand gesture recognition."""
 
+import math
 import unittest
 
-from recognition.gesture_recognition import GestureRecognizer
+from config import AppSettings
+from recognition.gesture_recognition import (
+    GestureRecognizer,
+    MultiHandGestureRecognizer,
+)
+
+
+FINGER_JOINTS = {
+    "index": (5, 6, 7, 8, -1.5, 2.0),
+    "middle": (9, 10, 11, 12, -0.5, 1.5),
+    "ring": (13, 14, 15, 16, 0.5, 1.7),
+    "pinky": (17, 18, 19, 20, 1.5, 2.2),
+}
 
 
 def build_landmarks(extended_fingers=None, thumb_mode="tucked"):
-    """Create simple synthetic landmarks for one requested hand shape."""
+    """Create a complete synthetic hand with realistic joint bends."""
     extended_fingers = set(extended_fingers or [])
-    landmarks = [(100, 180) for _ in range(21)]
-    landmarks[0] = (100, 220)
+    landmarks = [(0.0, 0.0) for _ in range(21)]
+    landmarks[0] = (0.0, 5.0)
 
-    finger_indexes = {
-        "index": (6, 8, 80),
-        "middle": (10, 12, 100),
-        "ring": (14, 16, 120),
-        "pinky": (18, 20, 140),
-    }
-    for finger_name, (pip_index, tip_index, x_position) in finger_indexes.items():
-        landmarks[pip_index] = (x_position, 140)
-        tip_y = 90 if finger_name in extended_fingers else 180
-        landmarks[tip_index] = (x_position, tip_y)
+    for finger_name, indexes in FINGER_JOINTS.items():
+        mcp_index, pip_index, dip_index, tip_index, finger_x, mcp_y = indexes
+        landmarks[mcp_index] = (finger_x, mcp_y)
+        landmarks[pip_index] = (finger_x, mcp_y - 1.0)
 
-    landmarks[2] = (75, 170)
-    landmarks[3] = (65, 165)
+        if finger_name in extended_fingers:
+            landmarks[dip_index] = (finger_x, mcp_y - 2.0)
+            landmarks[tip_index] = (finger_x, mcp_y - 3.0)
+        else:
+            landmarks[dip_index] = (finger_x + 0.8, mcp_y - 1.0)
+            landmarks[tip_index] = (finger_x + 0.8, mcp_y)
+
     if thumb_mode == "outward":
-        landmarks[4] = (35, 160)
+        landmarks[1:5] = [
+            (-0.8, 4.0),
+            (-1.6, 3.5),
+            (-2.4, 3.0),
+            (-3.2, 2.5),
+        ]
     elif thumb_mode == "up":
-        landmarks[2] = (90, 175)
-        landmarks[3] = (90, 145)
-        landmarks[4] = (90, 90)
+        landmarks[1:5] = [
+            (-1.0, 4.0),
+            (-1.0, 3.0),
+            (-1.0, 2.0),
+            (-1.0, 1.0),
+        ]
     elif thumb_mode == "down":
-        landmarks[2] = (90, 155)
-        landmarks[3] = (90, 185)
-        landmarks[4] = (90, 230)
+        landmarks[1:5] = [
+            (-1.0, 3.5),
+            (-1.0, 4.5),
+            (-1.0, 5.5),
+            (-1.0, 6.5),
+        ]
     else:
-        landmarks[4] = (85, 175)
+        landmarks[1:5] = [
+            (-0.8, 4.0),
+            (-1.4, 3.5),
+            (-0.7, 3.5),
+            (-0.3, 4.1),
+        ]
 
     return landmarks
 
 
+def rotate_landmarks(landmarks, degrees):
+    """Rotate every point around the wrist to copy a sideways camera pose."""
+    wrist_x, wrist_y = landmarks[0]
+    angle = math.radians(degrees)
+    rotated_points = []
+
+    for point_x, point_y in landmarks:
+        relative_x = point_x - wrist_x
+        relative_y = point_y - wrist_y
+        rotated_x = relative_x * math.cos(angle) - relative_y * math.sin(angle)
+        rotated_y = relative_x * math.sin(angle) + relative_y * math.cos(angle)
+        rotated_points.append((rotated_x + wrist_x, rotated_y + wrist_y))
+    return rotated_points
+
+
 class GestureRecognizerTests(unittest.TestCase):
-    """Verify every required named gesture can be identified."""
+    """Verify every required named gesture and the screenshot regression."""
 
     def setUp(self):
         self.recognizer = GestureRecognizer()
 
     def assert_gesture(self, expected_name, landmarks):
+        """Check one expected gesture with a useful confidence value."""
         gesture_name, confidence, _ = self.recognizer.recognize(landmarks, "Right")
         self.assertEqual(gesture_name, expected_name)
         self.assertGreater(confidence, 0.5)
@@ -56,6 +100,12 @@ class GestureRecognizerTests(unittest.TestCase):
             "Open Palm",
             build_landmarks({"index", "middle", "ring", "pinky"}, "outward"),
         )
+
+    def test_rotated_open_palm_is_not_thumbs_up(self):
+        open_palm = build_landmarks(
+            {"index", "middle", "ring", "pinky"}, "outward"
+        )
+        self.assert_gesture("Open Palm", rotate_landmarks(open_palm, 78))
 
     def test_closed_fist(self):
         self.assert_gesture("Closed Fist", build_landmarks())
@@ -82,6 +132,25 @@ class GestureRecognizerTests(unittest.TestCase):
         )
         self.assertEqual(gesture_name, "Phone Gesture")
         self.assertTrue(is_suspicious)
+
+    def test_gesture_must_be_stable_before_display(self):
+        settings = AppSettings(
+            gesture_history_frames=5,
+            gesture_stable_frames=3,
+            gesture_majority_ratio=0.60,
+        )
+        recognizer = MultiHandGestureRecognizer(settings)
+        open_palm = build_landmarks(
+            {"index", "middle", "ring", "pinky"}, "outward"
+        )
+
+        first_result = recognizer.recognize_all([open_palm], ["Right"])[0]
+        second_result = recognizer.recognize_all([open_palm], ["Right"])[0]
+        third_result = recognizer.recognize_all([open_palm], ["Right"])[0]
+
+        self.assertEqual(first_result["gesture"], "Unknown Gesture")
+        self.assertEqual(second_result["gesture"], "Unknown Gesture")
+        self.assertEqual(third_result["gesture"], "Open Palm")
 
 
 if __name__ == "__main__":

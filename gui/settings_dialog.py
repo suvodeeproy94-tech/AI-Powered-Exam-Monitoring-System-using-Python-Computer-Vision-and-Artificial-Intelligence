@@ -107,6 +107,13 @@ class SettingsDialog(ctk.CTkToplevel):
         self.mesh_var = tk.BooleanVar(value=self.updated_settings.draw_face_mesh)
         self._add_switch(container, "Draw Face Landmarks", self.mesh_var)
 
+        self.enhance_var = tk.BooleanVar(
+            value=self.updated_settings.enhance_low_light
+        )
+        self._add_switch(
+            container, "Improve Detection in Low Light", self.enhance_var
+        )
+
         self.logging_var = tk.BooleanVar(value=self.updated_settings.logging_enabled)
         self._add_switch(container, "Save Activity Logs", self.logging_var)
 
@@ -207,6 +214,7 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         self.updated_settings.mirror_camera = bool(self.mirror_var.get())
         self.updated_settings.draw_face_mesh = bool(self.mesh_var.get())
+        self.updated_settings.enhance_low_light = bool(self.enhance_var.get())
         self.updated_settings.logging_enabled = bool(self.logging_var.get())
         self.parent.apply_settings(self.updated_settings)
         self.destroy()

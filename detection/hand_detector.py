@@ -4,6 +4,7 @@ The current MediaPipe Hand Landmarker Tasks API runs with a local model file.
 Only simple landmark and movement values are returned to the behavior monitor.
 """
 
+from collections import deque
 import math
 import time
 
@@ -41,12 +42,15 @@ class HandDetector:
         )
 
         self._previous_wrist_positions = {}
+        self._movement_ratio_histories = {}
         self._last_timestamp_ms = 0
         self.hand_count = 0
         self.hand_landmarks = []
+        self.hand_landmark_points = []
         self.hand_bboxes = []
         self.hand_labels = []
         self.movement_speeds = []
+        self.movement_ratios = []
         self.excessive_movement = False
         self.last_results = self._empty_results()
 
@@ -57,7 +61,9 @@ class HandDetector:
             "hand_bboxes": [],
             "hand_labels": [],
             "hand_landmarks": [],
+            "hand_landmark_points": [],
             "movement_speeds": [],
+            "movement_ratios": [],
             "excessive_movement": False,
         }
 
@@ -80,16 +86,25 @@ class HandDetector:
         )
 
         self.hand_landmarks = list(result.hand_landmarks)
+        self.hand_landmark_points = []
         self.hand_bboxes = []
         self.hand_labels = []
         self.movement_speeds = []
+        self.movement_ratios = []
         self.excessive_movement = False
         current_wrist_positions = {}
+        visible_tracking_keys = set()
 
         for hand_index, hand_landmarks in enumerate(result.hand_landmarks):
             hand_label = self._get_hand_label(result.handedness, hand_index)
             tracking_key = f"{hand_label}_{hand_index}"
+            visible_tracking_keys.add(tracking_key)
             self.hand_labels.append(hand_label)
+
+            pixel_points = self._get_pixel_points(
+                hand_landmarks, frame_width, frame_height
+            )
+            self.hand_landmark_points.append(pixel_points)
 
             hand_box = self._get_hand_box(
                 hand_landmarks, frame_width, frame_height
@@ -110,19 +125,26 @@ class HandDetector:
             movement_speed = self._get_movement_speed(
                 tracking_key, wrist_position
             )
+            movement_ratio = self._get_smoothed_movement_ratio(
+                tracking_key, movement_speed, hand_box
+            )
             self.movement_speeds.append(movement_speed)
+            self.movement_ratios.append(movement_ratio)
 
-            if movement_speed >= self.settings.hand_movement_threshold:
+            if movement_ratio >= self.settings.hand_movement_ratio_threshold:
                 self.excessive_movement = True
 
         self._previous_wrist_positions = current_wrist_positions
+        self._remove_missing_movement_histories(visible_tracking_keys)
         self.hand_count = len(self.hand_landmarks)
         self.last_results = {
             "hand_count": self.hand_count,
             "hand_bboxes": list(self.hand_bboxes),
             "hand_labels": list(self.hand_labels),
             "hand_landmarks": list(self.hand_landmarks),
+            "hand_landmark_points": list(self.hand_landmark_points),
             "movement_speeds": [round(speed, 2) for speed in self.movement_speeds],
+            "movement_ratios": [round(ratio, 3) for ratio in self.movement_ratios],
             "excessive_movement": self.excessive_movement,
         }
         return annotated_frame, self.last_results.copy()
@@ -163,14 +185,38 @@ class HandDetector:
             return 0.0
         return math.dist(wrist_position, previous_position)
 
+    def _get_smoothed_movement_ratio(self, tracking_key, movement, hand_box):
+        """Compare movement with hand size and smooth small landmark jumps."""
+        _, _, box_width, box_height = hand_box
+        hand_size = max(math.hypot(box_width, box_height), 1.0)
+        movement_ratio = movement / hand_size
+
+        history = self._movement_ratio_histories.setdefault(
+            tracking_key, deque(maxlen=3)
+        )
+        history.append(movement_ratio)
+        return sum(history) / len(history)
+
+    def _remove_missing_movement_histories(self, visible_tracking_keys):
+        """Forget movement history after a hand leaves the camera frame."""
+        missing_keys = set(self._movement_ratio_histories) - visible_tracking_keys
+        for tracking_key in missing_keys:
+            self._movement_ratio_histories.pop(tracking_key, None)
+
+    def _get_pixel_points(self, hand_landmarks, frame_width, frame_height):
+        """Convert all hand landmarks into reusable pixel points."""
+        return [
+            (int(point.x * frame_width), int(point.y * frame_height))
+            for point in hand_landmarks
+        ]
+
     def _draw_hand_landmarks(
         self, frame, hand_landmarks, frame_width, frame_height
     ):
         """Draw all 21 points and the standard hand skeleton connections."""
-        pixel_points = [
-            (int(point.x * frame_width), int(point.y * frame_height))
-            for point in hand_landmarks
-        ]
+        pixel_points = self._get_pixel_points(
+            hand_landmarks, frame_width, frame_height
+        )
         for connection in vision.HandLandmarksConnections.HAND_CONNECTIONS:
             cv2.line(
                 frame,
