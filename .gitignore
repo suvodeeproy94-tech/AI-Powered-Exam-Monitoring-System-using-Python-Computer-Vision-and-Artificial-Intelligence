@@ -1,0 +1,28 @@
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local editor files
+.vscode/
+.idea/
+
+# Runtime settings and generated output
+settings.json
+logs/*.csv
+logs/*.log
+reports/output/*
+!logs/.gitkeep
+!reports/output/.gitkeep
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+
+# Operating system files
+.DS_Store
+Thumbs.db

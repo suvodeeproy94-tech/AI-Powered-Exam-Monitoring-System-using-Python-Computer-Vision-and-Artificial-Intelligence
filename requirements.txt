@@ -1,0 +1,16 @@
+# Core computer-vision packages
+opencv-contrib-python>=4.10,<5.0
+mediapipe>=0.10.35,<0.11
+numpy>=1.26,<3.0
+
+# Desktop dashboard and image display
+customtkinter>=5.2.2,<6.0
+Pillow>=10.3,<13.0
+
+# Monitoring reports and analysis
+pandas>=2.2,<4.0
+matplotlib>=3.8,<4.0
+reportlab>=4.1,<5.0
+
+# Future machine-learning experiments documented in the project scope
+scikit-learn>=1.4,<2.0
