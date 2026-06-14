@@ -64,6 +64,18 @@ class SettingsDialog(ctk.CTkToplevel):
             12,
         )
 
+        self.yunet_confidence_var = tk.DoubleVar(
+            value=self.updated_settings.yunet_score_threshold
+        )
+        self._add_slider(
+            container,
+            "YuNet Face Confidence",
+            self.yunet_confidence_var,
+            0.50,
+            0.90,
+            8,
+        )
+
         self.hand_confidence_var = tk.DoubleVar(
             value=self.updated_settings.hand_detection_confidence
         )
@@ -126,6 +138,13 @@ class SettingsDialog(ctk.CTkToplevel):
 
         self.mirror_var = tk.BooleanVar(value=self.updated_settings.mirror_camera)
         self._add_switch(container, "Mirror Camera Preview", self.mirror_var)
+
+        self.yunet_var = tk.BooleanVar(
+            value=self.updated_settings.yunet_face_detection_enabled
+        )
+        self._add_switch(
+            container, "Use YuNet Accurate Face Detector", self.yunet_var
+        )
 
         self.mesh_var = tk.BooleanVar(value=self.updated_settings.draw_face_mesh)
         self._add_switch(container, "Draw Face Landmarks", self.mesh_var)
@@ -259,6 +278,9 @@ class SettingsDialog(ctk.CTkToplevel):
         self.updated_settings.face_detection_confidence = round(
             self.face_confidence_var.get(), 2
         )
+        self.updated_settings.yunet_score_threshold = round(
+            self.yunet_confidence_var.get(), 2
+        )
         self.updated_settings.hand_detection_confidence = round(
             self.hand_confidence_var.get(), 2
         )
@@ -275,6 +297,9 @@ class SettingsDialog(ctk.CTkToplevel):
             self.cooldown_var.get(), 1
         )
         self.updated_settings.mirror_camera = bool(self.mirror_var.get())
+        self.updated_settings.yunet_face_detection_enabled = bool(
+            self.yunet_var.get()
+        )
         self.updated_settings.draw_face_mesh = bool(self.mesh_var.get())
         self.updated_settings.enhance_low_light = bool(self.enhance_var.get())
         self.updated_settings.calibration_enabled = bool(self.calibration_var.get())

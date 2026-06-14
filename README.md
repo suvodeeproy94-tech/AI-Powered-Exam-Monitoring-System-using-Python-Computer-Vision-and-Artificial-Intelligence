@@ -1,10 +1,11 @@
 # AI-Powered Exam Monitoring System
 
 > A desktop-based real-time exam monitoring application built with Python,
-> OpenCV, MediaPipe, artificial intelligence rules, and CustomTkinter.
+> OpenCV YuNet, MediaPipe, artificial intelligence rules, and CustomTkinter.
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-Real--time%20Vision-5C3EE8?logo=opencv&logoColor=white)
+![YuNet](https://img.shields.io/badge/YuNet-ONNX%20Face%20Detection-16A34A)
 ![MediaPipe](https://img.shields.io/badge/MediaPipe-Face%20and%20Hands-0097A7)
 ![Tests](https://img.shields.io/badge/Automated%20Tests-Passing-22C55E)
 
@@ -51,7 +52,8 @@ into small modules so each part can be explained separately during a viva.
 ### Project Highlights
 
 - Real-time webcam monitoring
-- Face detection and continuous face counting
+- YuNet face detection with automatic MediaPipe fallback
+- Continuous face counting and confidence display
 - Face edge, missing face, head turn, and movement checks
 - Two-hand detection with 21 landmarks per hand
 - Eight hand gesture labels with optional trained-model support
@@ -90,7 +92,7 @@ invigilator. It records visible events so the invigilator can review them.
 
 | Module | Current Behavior |
 |---|---|
-| Face Detection | Draws a face box, confidence, and optional face landmarks |
+| Face Detection | Uses YuNet for accurate face boxes and confidence, with automatic MediaPipe fallback |
 | Face Count | Expects exactly one face and detects zero or multiple faces |
 | Frame Position | Detects when the face stays near or outside a camera edge |
 | Head Pose | Uses OpenCV solvePnP to estimate head yaw, pitch, and roll |
@@ -118,8 +120,8 @@ invigilator. It records visible events so the invigilator can review them.
 | Area | Technology | Purpose |
 |---|---|---|
 | Programming Language | Python | Main application and monitoring logic |
-| Computer Vision | OpenCV | Webcam access, frame processing, drawing, and color conversion |
-| AI Landmarks | MediaPipe Tasks 0.10.35+ | Face detection, face landmarks, and hand landmarks |
+| Computer Vision | OpenCV | Webcam access, YuNet ONNX face detection, frame processing, and drawing |
+| AI Landmarks | MediaPipe Tasks 0.10.35+ | Face landmarks, head/gaze measurements, fallback face detection, and hand landmarks |
 | Desktop GUI | CustomTkinter | Professional dashboard and settings window |
 | Image Display | Pillow | Converts OpenCV frames for Tkinter display |
 | Numerical Data | NumPy | OpenCV frame arrays and numerical image operations |
@@ -170,7 +172,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A[User presses Start Monitoring] --> B[Load camera and MediaPipe models]
+    A[User presses Start Monitoring] --> B[Load camera, YuNet, and MediaPipe models]
     B --> C{Camera opened?}
     C -- No --> D[Show clear camera error]
     C -- Yes --> E[Read one frame]
@@ -319,6 +321,7 @@ AI_Exam_Monitoring_System/
 |-- assets/
 |   `-- models/
 |       |-- blaze_face_short_range.tflite
+|       |-- face_detection_yunet_2023mar.onnx
 |       |-- face_landmarker.task
 |       `-- hand_landmarker.task
 `-- settings.json              Generated after settings are saved
@@ -341,7 +344,8 @@ AI_Exam_Monitoring_System/
 
 ### `detection/face_detector.py`
 
-- Uses MediaPipe Tasks Face Detector for boxes and confidence values.
+- Uses OpenCV YuNet as the primary face detector for boxes and confidence.
+- Automatically uses MediaPipe Face Detector if YuNet is disabled or cannot run.
 - Uses MediaPipe Tasks Face Landmarker for landmarks and head-turn estimation.
 - Counts visible faces.
 - Checks camera edges.
@@ -519,12 +523,14 @@ The Settings window supports:
 - Camera index from 0 to 4
 - Camera resolution
 - Face detection confidence
+- YuNet face confidence (default `0.75` to reduce background false faces)
 - Hand detection confidence
 - Missing-face confirmation time
 - Personal calibration time
 - Look-away confirmation time
 - Repeated-alert cooldown
 - Mirrored camera preview
+- YuNet accurate face detection
 - Face landmark drawing
 - Head-pose monitoring
 - Iris and gaze tracking
@@ -752,7 +758,6 @@ files that need to be packaged correctly.
 ## Future Scope
 
 - Voice and background-noise monitoring
-- Optional OpenCV YuNet secondary face detector
 - Emotion recognition with ethical safeguards
 - Trained behavior anomaly detection
 - Identity verification before an exam

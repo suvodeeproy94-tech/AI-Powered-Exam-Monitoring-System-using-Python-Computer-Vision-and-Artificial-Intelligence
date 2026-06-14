@@ -27,6 +27,7 @@ SYSTEM_LOG_FILE = LOG_DIR / "system.log"
 FACE_DETECTOR_MODEL = MODEL_DIR / "blaze_face_short_range.tflite"
 FACE_LANDMARKER_MODEL = MODEL_DIR / "face_landmarker.task"
 HAND_LANDMARKER_MODEL = MODEL_DIR / "hand_landmarker.task"
+YUNET_FACE_DETECTOR_MODEL = MODEL_DIR / "face_detection_yunet_2023mar.onnx"
 GESTURE_CLASSIFIER_MODEL = MODEL_DIR / "gesture_classifier.joblib"
 
 for required_directory in (
@@ -56,6 +57,10 @@ class AppSettings:
 
     face_detection_confidence: float = 0.60
     face_tracking_confidence: float = 0.60
+    yunet_face_detection_enabled: bool = True
+    yunet_score_threshold: float = 0.75
+    yunet_nms_threshold: float = 0.30
+    yunet_top_k: int = 5000
     hand_detection_confidence: float = 0.60
     hand_tracking_confidence: float = 0.55
     max_hands: int = 2
@@ -131,6 +136,11 @@ class AppSettings:
 
         self.face_detection_confidence = _clamp(self.face_detection_confidence, 0.1, 1.0)
         self.face_tracking_confidence = _clamp(self.face_tracking_confidence, 0.1, 1.0)
+        self.yunet_score_threshold = _clamp(
+            self.yunet_score_threshold, 0.30, 0.95
+        )
+        self.yunet_nms_threshold = _clamp(self.yunet_nms_threshold, 0.1, 0.9)
+        self.yunet_top_k = max(100, min(10000, int(self.yunet_top_k)))
         self.hand_detection_confidence = _clamp(self.hand_detection_confidence, 0.1, 1.0)
         self.hand_tracking_confidence = _clamp(self.hand_tracking_confidence, 0.1, 1.0)
         self.max_hands = max(1, min(2, int(self.max_hands)))

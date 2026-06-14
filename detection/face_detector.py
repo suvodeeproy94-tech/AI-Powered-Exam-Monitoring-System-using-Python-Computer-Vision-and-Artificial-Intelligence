@@ -9,7 +9,11 @@ import time
 
 import cv2
 
-from config import FACE_DETECTOR_MODEL, FACE_LANDMARKER_MODEL
+from config import (
+    FACE_DETECTOR_MODEL,
+    FACE_LANDMARKER_MODEL,
+    YUNET_FACE_DETECTOR_MODEL,
+)
 from detection.face_analyzer import FaceAnalyzer
 from mediapipe.tasks import python as media_pipe_python
 from mediapipe.tasks.python import vision
@@ -48,6 +52,8 @@ class FaceDetector:
         self.face_landmarker = vision.FaceLandmarker.create_from_options(
             landmarker_options
         )
+        self.yunet_detector = self._create_yunet_detector()
+        self._yunet_runtime_failed = False
         self.face_analyzer = FaceAnalyzer(settings)
         self.face_count = 0
         self.face_bboxes = []
@@ -72,6 +78,22 @@ class FaceDetector:
                 "Missing MediaPipe face model files: " + ", ".join(missing_models)
             )
 
+    def _create_yunet_detector(self):
+        """Load YuNet when it is enabled and its local ONNX file exists."""
+        if not self.settings.yunet_face_detection_enabled:
+            return None
+        if not YUNET_FACE_DETECTOR_MODEL.exists():
+            return None
+
+        return cv2.FaceDetectorYN.create(
+            str(YUNET_FACE_DETECTOR_MODEL),
+            "",
+            (self.settings.camera_width, self.settings.camera_height),
+            self.settings.yunet_score_threshold,
+            self.settings.yunet_nms_threshold,
+            self.settings.yunet_top_k,
+        )
+
     def _empty_results(self):
         """Return a complete result object for frames with no visible face."""
         return {
@@ -89,6 +111,7 @@ class FaceDetector:
             "stable_face_visible": False,
             "primary_face_area_ratio": 0.0,
             "primary_face_track_id": None,
+            "face_detector_backend": "YuNet" if self.yunet_detector else "MediaPipe",
             **self.face_analyzer.empty_results(),
         }
 
@@ -104,59 +127,23 @@ class FaceDetector:
             data=rgb_frame,
         )
         timestamp_ms = self._next_timestamp_ms()
-        detection_result = self.face_detector.detect_for_video(
-            media_pipe_image, timestamp_ms
-        )
         landmark_result = self.face_landmarker.detect_for_video(
             media_pipe_image, timestamp_ms
         )
 
         annotated_frame = frame.copy()
-        face_bboxes = []
-        face_confidences = []
-        face_outside_frame = False
-
-        for detection in detection_result.detections:
-            bounding_box = detection.bounding_box
-            raw_x = int(bounding_box.origin_x)
-            raw_y = int(bounding_box.origin_y)
-            raw_width = int(bounding_box.width)
-            raw_height = int(bounding_box.height)
-
-            x = max(0, raw_x)
-            y = max(0, raw_y)
-            box_width = max(0, min(raw_width, frame_width - x))
-            box_height = max(0, min(raw_height, frame_height - y))
-
-            face_area_ratio = (
-                box_width * box_height / max(frame_width * frame_height, 1)
-            )
-            if (
-                box_width > 0
-                and box_height > 0
-                and face_area_ratio >= self.settings.minimum_face_area_ratio
-            ):
-                face_box = (x, y, box_width, box_height)
-                if self._is_near_frame_edge(
-                    raw_x,
-                    raw_y,
-                    raw_width,
-                    raw_height,
-                    frame_width,
-                    frame_height,
-                ):
-                    face_outside_frame = True
-                confidence = (
-                    float(detection.categories[0].score)
-                    if detection.categories
-                    else 0.0
-                )
-                self._append_distinct_face(
-                    face_bboxes,
-                    face_confidences,
-                    face_box,
-                    confidence,
-                )
+        (
+            face_bboxes,
+            face_confidences,
+            face_outside_frame,
+            detector_backend,
+        ) = self._detect_faces(
+            frame,
+            media_pipe_image,
+            timestamp_ms,
+            frame_width,
+            frame_height,
+        )
 
         raw_face_count = len(face_bboxes)
         self.face_count = raw_face_count
@@ -218,6 +205,7 @@ class FaceDetector:
             "stable_face_visible": stable_face_visible,
             "tracked_face_box": tracked_face_box,
             "primary_face_track_id": track_id,
+            "face_detector_backend": detector_backend,
             "face_outside_frame": face_outside_frame,
             "is_looking_away": detailed_analysis["is_looking_away"],
             "look_away_ratio": round(look_away_ratio, 3),
@@ -228,6 +216,134 @@ class FaceDetector:
             **detailed_analysis,
         }
         return annotated_frame, self.last_results.copy()
+
+    def _detect_faces(
+        self,
+        frame,
+        media_pipe_image,
+        timestamp_ms,
+        frame_width,
+        frame_height,
+    ):
+        """Use YuNet first and automatically fall back to MediaPipe."""
+        if self.yunet_detector is not None and not self._yunet_runtime_failed:
+            try:
+                return self._detect_faces_with_yunet(
+                    frame, frame_width, frame_height
+                )
+            except (cv2.error, RuntimeError, ValueError):
+                # A local OpenCV or model problem must not stop the exam session.
+                self._yunet_runtime_failed = True
+
+        return self._detect_faces_with_mediapipe(
+            media_pipe_image,
+            timestamp_ms,
+            frame_width,
+            frame_height,
+        )
+
+    def _detect_faces_with_yunet(self, frame, frame_width, frame_height):
+        """Detect all visible faces with the local YuNet ONNX model."""
+        self.yunet_detector.setInputSize((frame_width, frame_height))
+        _, detected_faces = self.yunet_detector.detect(frame)
+        raw_faces = [] if detected_faces is None else detected_faces
+
+        face_bboxes = []
+        face_confidences = []
+        face_outside_frame = False
+        for detected_face in raw_faces:
+            raw_x = int(round(float(detected_face[0])))
+            raw_y = int(round(float(detected_face[1])))
+            raw_width = int(round(float(detected_face[2])))
+            raw_height = int(round(float(detected_face[3])))
+            confidence = float(detected_face[-1])
+            face_outside_frame = self._add_face_candidate(
+                face_bboxes,
+                face_confidences,
+                raw_x,
+                raw_y,
+                raw_width,
+                raw_height,
+                confidence,
+                frame_width,
+                frame_height,
+            ) or face_outside_frame
+
+        return face_bboxes, face_confidences, face_outside_frame, "YuNet"
+
+    def _detect_faces_with_mediapipe(
+        self, media_pipe_image, timestamp_ms, frame_width, frame_height
+    ):
+        """Use the original detector when YuNet is disabled or unavailable."""
+        detection_result = self.face_detector.detect_for_video(
+            media_pipe_image, timestamp_ms
+        )
+        face_bboxes = []
+        face_confidences = []
+        face_outside_frame = False
+
+        for detection in detection_result.detections:
+            bounding_box = detection.bounding_box
+            confidence = (
+                float(detection.categories[0].score)
+                if detection.categories
+                else 0.0
+            )
+            face_outside_frame = self._add_face_candidate(
+                face_bboxes,
+                face_confidences,
+                int(bounding_box.origin_x),
+                int(bounding_box.origin_y),
+                int(bounding_box.width),
+                int(bounding_box.height),
+                confidence,
+                frame_width,
+                frame_height,
+            ) or face_outside_frame
+
+        return face_bboxes, face_confidences, face_outside_frame, "MediaPipe"
+
+    def _add_face_candidate(
+        self,
+        face_bboxes,
+        face_confidences,
+        raw_x,
+        raw_y,
+        raw_width,
+        raw_height,
+        confidence,
+        frame_width,
+        frame_height,
+    ):
+        """Validate, clip, and add one detector result to the face list."""
+        x = max(0, raw_x)
+        y = max(0, raw_y)
+        box_width = max(0, min(raw_width, frame_width - x))
+        box_height = max(0, min(raw_height, frame_height - y))
+        face_area_ratio = box_width * box_height / max(
+            frame_width * frame_height, 1
+        )
+        if (
+            box_width <= 0
+            or box_height <= 0
+            or face_area_ratio < self.settings.minimum_face_area_ratio
+        ):
+            return False
+
+        self._append_distinct_face(
+            face_bboxes,
+            face_confidences,
+            (x, y, box_width, box_height),
+            confidence,
+        )
+        return self._is_near_frame_edge(
+            raw_x,
+            raw_y,
+            raw_width,
+            raw_height,
+            frame_width,
+            frame_height,
+        )
 
     def _next_timestamp_ms(self):
         """Return a strictly increasing timestamp required by VIDEO mode."""

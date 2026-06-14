@@ -15,12 +15,14 @@ class AppSettingsTests(unittest.TestCase):
             camera_width=100,
             camera_height=5000,
             face_detection_confidence=4.0,
+            yunet_score_threshold=0.1,
             alert_cooldown_seconds=-2,
         ).validate()
 
         self.assertEqual(settings.camera_width, 320)
         self.assertEqual(settings.camera_height, 1080)
         self.assertEqual(settings.face_detection_confidence, 1.0)
+        self.assertEqual(settings.yunet_score_threshold, 0.30)
         self.assertEqual(settings.alert_cooldown_seconds, 0.0)
 
     def test_save_and_load_settings(self):
