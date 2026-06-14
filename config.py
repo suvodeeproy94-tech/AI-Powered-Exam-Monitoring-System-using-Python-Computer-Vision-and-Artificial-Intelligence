@@ -77,7 +77,7 @@ class AppSettings:
 
     alert_cooldown_seconds: float = 5.0
     logging_enabled: bool = True
-    draw_face_mesh: bool = True
+    draw_face_mesh: bool = False
 
     def validate(self):
         """Keep saved values inside safe and practical limits."""

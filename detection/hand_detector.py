@@ -110,13 +110,7 @@ class HandDetector:
                 hand_landmarks, frame_width, frame_height
             )
             self.hand_bboxes.append(hand_box)
-            self._draw_hand_landmarks(
-                annotated_frame,
-                hand_landmarks,
-                frame_width,
-                frame_height,
-            )
-            self._draw_hand_box(annotated_frame, hand_box, hand_label)
+            self._draw_hand_landmarks(annotated_frame, pixel_points)
 
             wrist_position = self._get_wrist_position(
                 hand_landmarks, frame_width, frame_height
@@ -210,38 +204,20 @@ class HandDetector:
             for point in hand_landmarks
         ]
 
-    def _draw_hand_landmarks(
-        self, frame, hand_landmarks, frame_width, frame_height
-    ):
-        """Draw all 21 points and the standard hand skeleton connections."""
-        pixel_points = self._get_pixel_points(
-            hand_landmarks, frame_width, frame_height
-        )
+    def _draw_hand_landmarks(self, frame, pixel_points):
+        """Draw white hand bones with clear red landmark points."""
         for connection in vision.HandLandmarksConnections.HAND_CONNECTIONS:
             cv2.line(
                 frame,
                 pixel_points[connection.start],
                 pixel_points[connection.end],
-                (0, 200, 255),
+                (245, 245, 245),
                 2,
+                cv2.LINE_AA,
             )
         for point in pixel_points:
-            cv2.circle(frame, point, 3, (255, 80, 80), -1)
-
-    def _draw_hand_box(self, frame, hand_box, hand_label):
-        """Draw a readable hand box and label on the video frame."""
-        x, y, width, height = hand_box
-        color = (255, 165, 0)
-        cv2.rectangle(frame, (x, y), (x + width, y + height), color, 2)
-        cv2.putText(
-            frame,
-            hand_label,
-            (x, max(20, y - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            color,
-            2,
-        )
+            cv2.circle(frame, point, 5, (245, 245, 245), -1, cv2.LINE_AA)
+            cv2.circle(frame, point, 3, (0, 0, 255), -1, cv2.LINE_AA)
 
     def get_landmark_list(self, hand_index=0, frame_shape=(480, 640)):
         """Return all 21 landmarks as simple pixel coordinate tuples."""

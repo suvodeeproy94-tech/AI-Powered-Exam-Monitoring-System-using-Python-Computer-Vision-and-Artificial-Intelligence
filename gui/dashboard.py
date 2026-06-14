@@ -34,6 +34,7 @@ from detection.frame_quality import prepare_detection_frame
 from detection.hand_detector import HandDetector
 from gui.components import AlertRow, StatusBadge
 from gui.settings_dialog import SettingsDialog
+from gui.video_overlay import draw_monitoring_overlay
 from monitoring.alert_manager import AlertLevel, AlertManager, LEVEL_COLORS, logger
 from monitoring.behavior_monitor import BehaviorMonitor
 from recognition.gesture_recognition import MultiHandGestureRecognizer
@@ -403,7 +404,11 @@ class Dashboard(ctk.CTk):
                 self.behavior_monitor.analyse(
                     face_results, hand_results, gesture_results
                 )
-                self._draw_gesture_text(annotated_frame, gesture_results)
+                draw_monitoring_overlay(
+                    annotated_frame,
+                    face_results["face_count"],
+                    gesture_results,
+                )
 
                 status_snapshot = self.behavior_monitor.get_snapshot()
                 status_snapshot["face_count"] = face_results["face_count"]
@@ -418,24 +423,6 @@ class Dashboard(ctk.CTk):
             if camera is not None:
                 camera.release()
             self._message_queue.put(("stopped", None))
-
-    def _draw_gesture_text(self, frame, gesture_results):
-        """Add gesture name and confidence to the top-left of the video frame."""
-        for index, result in enumerate(gesture_results):
-            color = (0, 165, 255) if result["is_suspicious"] else (255, 200, 0)
-            text = (
-                f"{result['hand']}: {result['gesture']} "
-                f"({result['confidence']:.0%})"
-            )
-            cv2.putText(
-                frame,
-                text,
-                (12, 28 + index * 28),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.62,
-                color,
-                2,
-            )
 
     def _replace_queue_item(self, target_queue, value):
         """Keep only the newest frame or status object in a small queue."""

@@ -94,6 +94,7 @@ invigilator. It records visible events so the invigilator can review them.
 | Camera Quality | Measures brightness and blur, and improves dark frames before detection |
 | Hand Movement | Measures wrist movement relative to hand size and smooths landmark noise |
 | Gesture Recognition | Uses finger joint angles, hand rotation support, and multi-frame voting for stable gesture labels |
+| Live Video Overlay | Shows a large face-count message, gesture name, green face box, white hand bones, and red landmark points |
 | Suspicious Activity | Checks face missing, multiple faces, looking away, hand covering face, fast hand movement, suspicious gestures, face outside frame, and frequent movement |
 | Alerts | Shows INFO, WARNING, and CRITICAL events with cooldown control |
 | Logging | Saves date, time, event type, alert type, and description to CSV |

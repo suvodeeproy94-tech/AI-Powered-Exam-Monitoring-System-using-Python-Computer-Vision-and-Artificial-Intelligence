@@ -322,17 +322,36 @@ class FaceDetector:
         for index, box in enumerate(boxes):
             x, y, width, height = box
             confidence = confidences[index] if index < len(confidences) else 0.0
-            color = (0, 0, 255) if len(boxes) > 1 or is_outside else (0, 200, 0)
+            color = (0, 0, 255) if len(boxes) > 1 or is_outside else (0, 255, 0)
             label = f"Face {index + 1}: {confidence:.0%}"
-            cv2.rectangle(frame, (x, y), (x + width, y + height), color, 2)
+            label_position = (x, max(22, y - 8))
+            cv2.rectangle(
+                frame,
+                (x, y),
+                (x + width, y + height),
+                color,
+                3,
+                cv2.LINE_AA,
+            )
             cv2.putText(
                 frame,
                 label,
-                (x, max(20, y - 8)),
+                (label_position[0] + 2, label_position[1] + 2),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
+                0.58,
+                (20, 20, 20),
+                4,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame,
+                label,
+                label_position,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.58,
                 color,
                 2,
+                cv2.LINE_AA,
             )
 
     def release(self):
