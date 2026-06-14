@@ -1,15 +1,37 @@
-# Python cache and virtual environments
+# Python cache and compiled files
 __pycache__/
-*.py[cod]
+*.py[codz]
+*$py.class
+*.so
+
+# Virtual environments and local secrets
+.env
+.envrc
 .venv/
 venv/
 env/
+ENV/
+
+# Distribution and packaging output
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+MANIFEST
+*.manifest
+*.spec
 
 # Local editor files
 .vscode/
 .idea/
+.spyderproject
+.spyproject
 
-# Runtime settings and generated output
+# Runtime settings and generated project output
 settings.json
 logs/*.csv
 logs/*.log
@@ -17,12 +39,28 @@ reports/output/*
 !logs/.gitkeep
 !reports/output/.gitkeep
 
-# Test and coverage output
+# Test, type-checking, and coverage output
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+coverage.xml
+*.cover
 .cache/
 
-# Operating system files
+# Notebook and documentation output
+.ipynb_checkpoints/
+docs/_build/
+site/
+
+# Temporary and operating-system files
+tempCodeRunnerFile.py
 .DS_Store
 Thumbs.db
