@@ -30,6 +30,8 @@ class AlertManagerTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["alert_type"], AlertLevel.WARNING)
             self.assertEqual(rows[0]["event_type"], "LOOKING_AWAY")
+            self.assertIn("risk_score", rows[0])
+            self.assertIn("evidence_path", rows[0])
 
     def test_cooldown_blocks_immediate_duplicate(self):
         manager = AlertManager(cooldown_seconds=60, logging_enabled=False)

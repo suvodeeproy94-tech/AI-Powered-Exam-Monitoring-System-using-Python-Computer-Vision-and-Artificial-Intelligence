@@ -37,6 +37,8 @@ from gui.settings_dialog import SettingsDialog
 from gui.video_overlay import draw_monitoring_overlay
 from monitoring.alert_manager import AlertLevel, AlertManager, LEVEL_COLORS, logger
 from monitoring.behavior_monitor import BehaviorMonitor
+from monitoring.calibration_manager import CalibrationManager
+from monitoring.evidence_manager import EvidenceManager
 from recognition.gesture_recognition import MultiHandGestureRecognizer
 from reports.report_generator import ReportGenerator
 
@@ -54,7 +56,13 @@ class Dashboard(ctk.CTk):
             cooldown_seconds=self.settings.alert_cooldown_seconds,
             logging_enabled=self.settings.logging_enabled,
         )
-        self.behavior_monitor = BehaviorMonitor(self.alert_manager, self.settings)
+        self.evidence_manager = EvidenceManager(self.settings)
+        self.behavior_monitor = BehaviorMonitor(
+            self.alert_manager,
+            self.settings,
+            self.evidence_manager,
+        )
+        self.calibration_manager = CalibrationManager(self.settings)
         self.gesture_recognizer = MultiHandGestureRecognizer(self.settings)
         self.report_generator = ReportGenerator()
 
@@ -70,6 +78,8 @@ class Dashboard(ctk.CTk):
         self._message_queue = queue.Queue()
         self._display_image = None
         self._last_alert_signature = None
+        self._calibration_applied = False
+        self._session_summary_logged = False
         self._poll_job = None
         self._clock_job = None
 
@@ -198,15 +208,17 @@ class Dashboard(ctk.CTk):
         self._stat_critical = self._create_stat_row(stats_card, 4, "Critical Alerts")
         self._stat_face = self._create_stat_row(stats_card, 5, "Face Violations")
         self._stat_gesture = self._create_stat_row(stats_card, 6, "Gesture Violations")
+        self._stat_risk = self._create_stat_row(stats_card, 7, "Current Risk Score")
+        self._stat_attention = self._create_stat_row(stats_card, 8, "Attention")
 
         ctk.CTkLabel(
             stats_card,
             text="Current Alert Status",
             text_color="#94a3b8",
             font=ctk.CTkFont(size=11),
-        ).grid(row=7, column=0, padx=10, pady=(3, 8), sticky="w")
+        ).grid(row=9, column=0, padx=10, pady=(3, 8), sticky="w")
         self._alert_badge = StatusBadge(stats_card, "IDLE", COLOR_NEUTRAL)
-        self._alert_badge.grid(row=7, column=1, padx=10, pady=(3, 8), sticky="e")
+        self._alert_badge.grid(row=9, column=1, padx=10, pady=(3, 8), sticky="e")
 
         ctk.CTkLabel(
             right_panel,
@@ -334,7 +346,12 @@ class Dashboard(ctk.CTk):
             )
             return
 
-        self.behavior_monitor.reset_session()
+        session_start_time = time.monotonic()
+        self.behavior_monitor.reset_session(session_start_time)
+        self.calibration_manager.settings = self.settings
+        self.calibration_manager.reset(session_start_time)
+        self._calibration_applied = False
+        self._session_summary_logged = False
         self.gesture_recognizer.reset()
         self._stop_event.clear()
         self._monitoring = True
@@ -378,6 +395,7 @@ class Dashboard(ctk.CTk):
                     continue
 
                 failed_reads = 0
+                frame_time = time.monotonic()
                 if self.settings.mirror_camera:
                     frame = cv2.flip(frame, 1)
 
@@ -401,13 +419,34 @@ class Dashboard(ctk.CTk):
                 gesture_results = self.gesture_recognizer.recognize_all(
                     landmark_lists, hand_results["hand_labels"]
                 )
-                self.behavior_monitor.analyse(
-                    face_results, hand_results, gesture_results
+                calibration_result = self.calibration_manager.update(
+                    face_results, frame_time
                 )
+                if calibration_result.complete and not self._calibration_applied:
+                    self.face_detector.set_calibration_profile(
+                        calibration_result.profile
+                    )
+                    self._calibration_applied = True
+                    if self.settings.calibration_enabled:
+                        self.alert_manager.info(
+                            "CALIBRATION_COMPLETE",
+                            "Camera, face position, head pose, and gaze calibration completed.",
+                            force=True,
+                        )
                 draw_monitoring_overlay(
                     annotated_frame,
                     face_results["face_count"],
                     gesture_results,
+                    face_results,
+                    calibration_result,
+                )
+                self.behavior_monitor.analyse(
+                    face_results,
+                    hand_results,
+                    gesture_results,
+                    current_time=frame_time,
+                    frame=annotated_frame,
+                    calibrating=not calibration_result.complete,
                 )
 
                 status_snapshot = self.behavior_monitor.get_snapshot()
@@ -527,6 +566,7 @@ class Dashboard(ctk.CTk):
             + stats["multiple_face_violations"]
             + stats["face_outside_violations"]
             + stats["look_away_violations"]
+            + stats["eyes_closed_violations"]
             + stats["hand_cover_violations"]
         )
         self._stat_frames.configure(text=str(stats["frames_processed"]))
@@ -540,6 +580,10 @@ class Dashboard(ctk.CTk):
         self._stat_face.configure(text=str(face_violations))
         self._stat_gesture.configure(
             text=str(stats["suspicious_gesture_violations"])
+        )
+        self._stat_risk.configure(text=f"{stats['risk_score']:.0f}/100")
+        self._stat_attention.configure(
+            text=f"{stats['attention_percentage']:.1f}%"
         )
 
     def _refresh_alert_history(self):
@@ -581,6 +625,7 @@ class Dashboard(ctk.CTk):
         if self._capture_thread and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=1.5)
 
+        self._log_session_summary()
         self.alert_manager.info(
             "MONITORING_STOPPED", "Monitoring session stopped.", force=True
         )
@@ -594,11 +639,32 @@ class Dashboard(ctk.CTk):
 
     def _finish_stopped_state(self):
         """Restore stopped controls after normal completion or a camera error."""
+        self._log_session_summary()
         self._monitoring = False
         self._start_button.configure(state="normal")
         self._stop_button.configure(state="disabled")
         self._global_badge.set_status("STOPPED", COLOR_NEUTRAL)
         self._alert_badge.set_status("STOPPED", COLOR_NEUTRAL)
+
+    def _log_session_summary(self):
+        """Write one final attention, duration, and risk record per session."""
+        if self._session_summary_logged or not self._monitoring:
+            return
+        session_stats = self.behavior_monitor.finish_session()
+        description = (
+            f"Session duration {session_stats['session_duration_seconds']:.1f} seconds; "
+            f"attention {session_stats['attention_percentage']:.1f}%; "
+            f"maximum risk {session_stats['maximum_risk_score']:.1f}/100."
+        )
+        self.alert_manager.info(
+            "SESSION_SUMMARY",
+            description,
+            force=True,
+            duration_seconds=session_stats["session_duration_seconds"],
+            risk_score=session_stats["maximum_risk_score"],
+            attention_percentage=session_stats["attention_percentage"],
+        )
+        self._session_summary_logged = True
 
     def _release_detectors(self):
         """Close MediaPipe resources after the capture thread has ended."""
@@ -650,6 +716,9 @@ class Dashboard(ctk.CTk):
         self.alert_manager.cooldown_seconds = self.settings.alert_cooldown_seconds
         self.alert_manager.set_logging_enabled(self.settings.logging_enabled)
         self.behavior_monitor.settings = self.settings
+        self.behavior_monitor.risk_engine.settings = self.settings
+        self.evidence_manager.settings = self.settings
+        self.calibration_manager = CalibrationManager(self.settings)
         self.gesture_recognizer = MultiHandGestureRecognizer(self.settings)
         messagebox.showinfo(
             "Settings Saved",
@@ -669,6 +738,7 @@ class Dashboard(ctk.CTk):
         self._stop_event.set()
         if self._capture_thread and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=2.0)
+        self._log_session_summary()
         self._release_detectors()
 
         if self._poll_job:

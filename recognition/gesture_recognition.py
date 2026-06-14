@@ -10,6 +10,7 @@ from collections import Counter, deque
 import math
 
 from config import AppSettings, GESTURE_LABELS, SUSPICIOUS_GESTURES
+from recognition.trained_gesture_model import TrainedGestureModel
 
 
 FINGER_JOINTS = {
@@ -116,14 +117,27 @@ def _expected_state_quality(extension_scores, expected_extended):
 class GestureRecognizer:
     """Classify one hand as one of the required exam-monitoring gestures."""
 
-    def __init__(self, minimum_confidence=0.58):
+    def __init__(self, minimum_confidence=0.58, settings=None):
         self.minimum_confidence = minimum_confidence
+        self.settings = settings or AppSettings()
+        self.trained_model = TrainedGestureModel()
 
     def recognize(self, landmark_list, hand_label="Right"):
         """Return a gesture name, geometric confidence, and suspicious flag."""
         del hand_label
         if len(landmark_list) != 21:
             return "Unknown Gesture", 0.0, False
+
+        if self.settings.trained_gesture_model_enabled:
+            model_gesture, model_confidence = self.trained_model.predict(
+                landmark_list
+            )
+            if model_confidence >= self.settings.trained_gesture_min_confidence:
+                return (
+                    model_gesture,
+                    round(model_confidence, 2),
+                    model_gesture in SUSPICIOUS_GESTURES,
+                )
 
         extension_scores = {
             finger_name: _finger_extension_score(landmark_list, joint_indexes)
@@ -222,7 +236,10 @@ class MultiHandGestureRecognizer:
 
     def __init__(self, settings=None):
         self.settings = settings or AppSettings()
-        self.recognizer = GestureRecognizer(self.settings.gesture_min_confidence)
+        self.recognizer = GestureRecognizer(
+            self.settings.gesture_min_confidence,
+            self.settings,
+        )
         self._gesture_histories = {}
         self._stable_results = {}
 

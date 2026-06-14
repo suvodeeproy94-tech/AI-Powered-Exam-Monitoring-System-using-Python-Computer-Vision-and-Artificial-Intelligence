@@ -4,7 +4,10 @@ Each suspicious condition must remain true for a small number of frames before
 an alert is created. This reduces false alerts caused by one blurred frame.
 """
 
+import time
+
 from monitoring.alert_manager import AlertLevel
+from monitoring.risk_score import RiskScoreEngine
 
 
 def boxes_overlap_ratio(face_box, hand_box):
@@ -46,12 +49,17 @@ def count_landmarks_inside_box(landmark_points, box):
 class BehaviorMonitor:
     """Track suspicious conditions and send confirmed events to AlertManager."""
 
-    def __init__(self, alert_manager, settings):
+    def __init__(self, alert_manager, settings, evidence_manager=None):
         self.alert_manager = alert_manager
         self.settings = settings
+        self.evidence_manager = evidence_manager
         self._condition_streaks = {}
+        self._condition_start_times = {}
+        self._condition_durations = {}
+        self._reported_condition_durations = {}
         self._active_conditions = {}
         self._has_seen_face = False
+        self.risk_engine = RiskScoreEngine(settings)
 
         self.face_status = "Waiting for monitoring"
         self.hand_status = "No hands"
@@ -60,11 +68,22 @@ class BehaviorMonitor:
         self.alert_level = AlertLevel.INFO
         self.reset_session()
 
-    def reset_session(self):
+    def reset_session(self, current_time=None):
         """Clear temporary condition state and start fresh session statistics."""
         self._condition_streaks.clear()
+        self._condition_start_times.clear()
+        self._condition_durations.clear()
+        self._reported_condition_durations.clear()
         self._active_conditions.clear()
         self._has_seen_face = False
+        self._session_start_time = (
+            time.monotonic() if current_time is None else float(current_time)
+        )
+        self._last_analysis_time = self._session_start_time
+        self._current_frame = None
+        self._current_time = self._session_start_time
+        self.risk_engine.settings = self.settings
+        self.risk_engine.reset(self._session_start_time)
         self.stats = {
             "frames_processed": 0,
             "total_violations": 0,
@@ -72,39 +91,98 @@ class BehaviorMonitor:
             "multiple_face_violations": 0,
             "face_outside_violations": 0,
             "look_away_violations": 0,
+            "eyes_closed_violations": 0,
             "hand_cover_violations": 0,
             "excessive_hand_violations": 0,
             "frequent_movement_violations": 0,
             "suspicious_gesture_violations": 0,
+            "attention_frames": 0,
+            "monitored_frames": 0,
+            "attention_percentage": 100.0,
+            "session_duration_seconds": 0.0,
+            "risk_score": 0.0,
+            "maximum_risk_score": 0.0,
         }
 
-    def analyse(self, face_results, hand_results, gesture_results):
+    def analyse(
+        self,
+        face_results,
+        hand_results,
+        gesture_results,
+        current_time=None,
+        frame=None,
+        calibrating=False,
+    ):
         """Run every monitoring rule for one processed camera frame."""
+        self._current_time = (
+            time.monotonic() if current_time is None else float(current_time)
+        )
+        self._uses_time_confirmation = current_time is not None
+        self._current_frame = frame
+        self._last_analysis_time = self._current_time
         self.stats["frames_processed"] += 1
+        self.stats["session_duration_seconds"] = round(
+            max(0.0, self._current_time - self._session_start_time), 1
+        )
+        self.risk_engine.update_time(self._current_time)
+
+        if calibrating:
+            self.face_status = "Calibrating camera"
+            self.hand_status = "Please remain still"
+            self.gesture_status = "Calibration"
+            self.alert_status = "CALIBRATING"
+            self.alert_level = AlertLevel.INFO
+            self._update_risk_statistics()
+            return []
+
+        self._update_attention_statistics(face_results)
         fired_alerts = []
 
         fired_alerts.extend(self._check_face_count(face_results))
         fired_alerts.extend(self._check_face_outside_frame(face_results))
         fired_alerts.extend(self._check_look_away(face_results))
+        fired_alerts.extend(self._check_eyes_closed(face_results))
         fired_alerts.extend(self._check_hand_cover(face_results, hand_results))
         fired_alerts.extend(self._check_hand_movement(hand_results))
         fired_alerts.extend(self._check_frequent_movement(face_results))
         fired_alerts.extend(self._check_suspicious_gesture(gesture_results))
 
         self._update_display_status(face_results, hand_results, gesture_results)
+        self._update_risk_statistics()
         return fired_alerts
 
-    def _condition_is_confirmed(self, condition_name, is_true, required_frames):
-        """Count consecutive true frames for one monitoring condition."""
+    def _condition_is_confirmed(
+        self,
+        condition_name,
+        is_true,
+        required_frames,
+        required_seconds,
+    ):
+        """Confirm by elapsed time at runtime and by frames in legacy tests."""
         if is_true:
             self._condition_streaks[condition_name] = (
                 self._condition_streaks.get(condition_name, 0) + 1
             )
+            self._condition_start_times.setdefault(
+                condition_name, self._current_time
+            )
+            self._condition_durations[condition_name] = max(
+                0.0,
+                self._current_time - self._condition_start_times[condition_name],
+            )
         else:
             self._condition_streaks[condition_name] = 0
+            self._condition_start_times.pop(condition_name, None)
+            self._condition_durations[condition_name] = 0.0
+            self._reported_condition_durations.pop(condition_name, None)
             self._active_conditions[condition_name] = False
 
-        confirmed = self._condition_streaks[condition_name] >= required_frames
+        if self._uses_time_confirmation:
+            confirmed = (
+                self._condition_durations[condition_name] >= required_seconds
+            )
+        else:
+            confirmed = self._condition_streaks[condition_name] >= required_frames
         self._active_conditions[condition_name] = confirmed
         return confirmed
 
@@ -116,6 +194,51 @@ class BehaviorMonitor:
         self.stats["total_violations"] += 1
         return [alert]
 
+    def _condition_duration(self, condition_name):
+        """Return how long one current condition has remained true."""
+        return self._condition_durations.get(condition_name, 0.0)
+
+    def _fire_alert(self, level, event_type, description, condition_name="", force=False):
+        """Add risk and optional evidence metadata before creating an alert."""
+        if level in (AlertLevel.WARNING, AlertLevel.CRITICAL):
+            risk_score = self.risk_engine.preview_event(event_type)
+        else:
+            risk_score = self.risk_engine.score
+
+        evidence_path = ""
+        should_create_alert = self.alert_manager.can_fire(event_type, force)
+        if should_create_alert and self.evidence_manager is not None:
+            evidence_path = self.evidence_manager.capture(
+                self._current_frame,
+                event_type,
+                level,
+            )
+
+        total_condition_duration = self._condition_duration(condition_name)
+        previously_reported_duration = self._reported_condition_durations.get(
+            condition_name, 0.0
+        )
+        new_condition_duration = max(
+            0.0, total_condition_duration - previously_reported_duration
+        )
+        alert = self.alert_manager.fire(
+            level,
+            event_type,
+            description,
+            force=force,
+            duration_seconds=new_condition_duration,
+            risk_score=risk_score,
+            attention_percentage=self.stats["attention_percentage"],
+            evidence_path=evidence_path,
+        )
+        if alert is not None and level in (AlertLevel.WARNING, AlertLevel.CRITICAL):
+            self.risk_engine.add_event(event_type)
+        if alert is not None and condition_name:
+            self._reported_condition_durations[condition_name] = (
+                total_condition_duration
+            )
+        return alert
+
     def _check_face_count(self, face_results):
         """Detect missing faces, multiple faces, and first successful detection."""
         face_count = face_results.get("face_count", 0)
@@ -123,13 +246,15 @@ class BehaviorMonitor:
 
         face_missing = self._condition_is_confirmed(
             "face_missing",
-            face_count == 0,
+            not face_results.get("stable_face_visible", face_count > 0),
             self.settings.face_missing_frames,
+            self.settings.face_missing_seconds,
         )
         multiple_faces = self._condition_is_confirmed(
             "multiple_faces",
             face_count > self.settings.expected_face_count,
             self.settings.multiple_face_frames,
+            self.settings.multiple_face_seconds,
         )
 
         if face_missing:
@@ -138,25 +263,30 @@ class BehaviorMonitor:
                 quality_hint = " Improve the room lighting or face the light source."
             elif face_results.get("is_blurry"):
                 quality_hint = " Keep the camera and your face steady."
-            alert = self.alert_manager.critical(
+            alert = self._fire_alert(
+                AlertLevel.CRITICAL,
                 "FACE_MISSING",
                 "No face is visible. The student may have left the camera frame."
                 + quality_hint,
+                "face_missing",
             )
             fired_alerts.extend(
                 self._record_violation(alert, "face_missing_violations")
             )
         elif multiple_faces:
-            alert = self.alert_manager.critical(
+            alert = self._fire_alert(
+                AlertLevel.CRITICAL,
                 "MULTIPLE_FACES",
                 f"{face_count} faces are visible. Only one student is expected.",
+                "multiple_faces",
             )
             fired_alerts.extend(
                 self._record_violation(alert, "multiple_face_violations")
             )
         elif face_count == self.settings.expected_face_count and not self._has_seen_face:
             self._has_seen_face = True
-            alert = self.alert_manager.info(
+            alert = self._fire_alert(
+                AlertLevel.INFO,
                 "FACE_DETECTED",
                 "Face detected successfully.",
                 force=True,
@@ -176,13 +306,16 @@ class BehaviorMonitor:
             "face_outside",
             is_outside,
             self.settings.face_outside_frames,
+            self.settings.face_outside_seconds,
         )
         if not confirmed:
             return []
 
-        alert = self.alert_manager.warning(
+        alert = self._fire_alert(
+            AlertLevel.WARNING,
             "FACE_OUTSIDE_FRAME",
             "The face is too close to the camera edge or partly outside the frame.",
+            "face_outside",
         )
         return self._record_violation(alert, "face_outside_violations")
 
@@ -196,13 +329,19 @@ class BehaviorMonitor:
             "looking_away",
             is_looking_away,
             self.settings.look_away_frames,
+            self.settings.look_away_seconds,
         )
         if not confirmed:
             return []
 
-        alert = self.alert_manager.warning(
+        attention_reason = face_results.get(
+            "attention_reason", "The student appears to be looking away"
+        )
+        alert = self._fire_alert(
+            AlertLevel.WARNING,
             "LOOKING_AWAY",
-            "The student appears to be looking away from the exam screen.",
+            f"{attention_reason}. The student may not be looking at the exam screen.",
+            "looking_away",
         )
         return self._record_violation(alert, "look_away_violations")
 
@@ -237,16 +376,42 @@ class BehaviorMonitor:
             "hand_covering_face",
             largest_overlap > 0.0,
             self.settings.hand_cover_frames,
+            self.settings.hand_cover_seconds,
         )
         if not confirmed:
             return []
 
-        alert = self.alert_manager.warning(
+        alert = self._fire_alert(
+            AlertLevel.WARNING,
             "HAND_COVERING_FACE",
             f"A hand is covering about {largest_overlap:.0%} of the face area "
             f"with {largest_landmark_count} hand points over the face.",
+            "hand_covering_face",
         )
         return self._record_violation(alert, "hand_cover_violations")
+
+    def _check_eyes_closed(self, face_results):
+        """Alert only when both eyes stay closed long enough to exclude a blink."""
+        eyes_closed = (
+            face_results.get("face_count", 0) == 1
+            and face_results.get("eyes_closed", False)
+        )
+        confirmed = self._condition_is_confirmed(
+            "eyes_closed",
+            eyes_closed,
+            max(1, int(self.settings.camera_fps * self.settings.eyes_closed_seconds)),
+            self.settings.eyes_closed_seconds,
+        )
+        if not confirmed:
+            return []
+
+        alert = self._fire_alert(
+            AlertLevel.WARNING,
+            "EYES_CLOSED",
+            "Both eyes remained closed for several seconds.",
+            "eyes_closed",
+        )
+        return self._record_violation(alert, "eyes_closed_violations")
 
     def _check_hand_movement(self, hand_results):
         """Alert when fast hand movement continues across several frames."""
@@ -254,13 +419,16 @@ class BehaviorMonitor:
             "excessive_hand_movement",
             hand_results.get("excessive_movement", False),
             self.settings.excessive_hand_frames,
+            self.settings.excessive_hand_seconds,
         )
         if not confirmed:
             return []
 
-        alert = self.alert_manager.warning(
+        alert = self._fire_alert(
+            AlertLevel.WARNING,
             "EXCESSIVE_HAND_MOVEMENT",
-            "Fast hand movement continued for several camera frames.",
+            "Fast hand movement continued for a meaningful period.",
+            "excessive_hand_movement",
         )
         return self._record_violation(alert, "excessive_hand_violations")
 
@@ -275,13 +443,16 @@ class BehaviorMonitor:
             "frequent_movement",
             moving_frequently,
             self.settings.frequent_movement_frames,
+            self.settings.frequent_movement_seconds,
         )
         if not confirmed:
             return []
 
-        alert = self.alert_manager.warning(
+        alert = self._fire_alert(
+            AlertLevel.WARNING,
             "FREQUENT_MOVEMENT",
             "Frequent body or head movement was detected.",
+            "frequent_movement",
         )
         return self._record_violation(alert, "frequent_movement_violations")
 
@@ -296,16 +467,45 @@ class BehaviorMonitor:
             "suspicious_gesture",
             bool(suspicious_gestures),
             self.settings.suspicious_gesture_frames,
+            self.settings.suspicious_gesture_seconds,
         )
         if not confirmed:
             return []
 
         gesture_names = ", ".join(sorted(set(suspicious_gestures)))
-        alert = self.alert_manager.warning(
+        alert = self._fire_alert(
+            AlertLevel.WARNING,
             "SUSPICIOUS_GESTURE",
             f"Suspicious gesture detected: {gesture_names}.",
+            "suspicious_gesture",
         )
         return self._record_violation(alert, "suspicious_gesture_violations")
+
+    def _update_attention_statistics(self, face_results):
+        """Measure the percentage of monitored frames with normal attention."""
+        self.stats["monitored_frames"] += 1
+        is_attentive = (
+            face_results.get("face_count", 0) == 1
+            and not face_results.get("is_looking_away", False)
+            and not face_results.get("eyes_closed", False)
+            and not face_results.get("face_outside_frame", False)
+        )
+        if is_attentive:
+            self.stats["attention_frames"] += 1
+        self.stats["attention_percentage"] = round(
+            self.stats["attention_frames"]
+            / max(self.stats["monitored_frames"], 1)
+            * 100,
+            1,
+        )
+
+    def _update_risk_statistics(self):
+        """Copy risk values into session statistics for the GUI and report."""
+        risk_snapshot = self.risk_engine.snapshot()
+        self.stats["risk_score"] = risk_snapshot["risk_score"]
+        self.stats["maximum_risk_score"] = risk_snapshot[
+            "maximum_risk_score"
+        ]
 
     def _update_display_status(self, face_results, hand_results, gesture_results):
         """Prepare short status text values for the dashboard."""
@@ -347,16 +547,30 @@ class BehaviorMonitor:
         warning_conditions = (
             "face_outside",
             "looking_away",
+            "eyes_closed",
             "hand_covering_face",
             "excessive_hand_movement",
             "frequent_movement",
             "suspicious_gesture",
         )
 
-        if any(self._active_conditions.get(name, False) for name in critical_conditions):
+        risk_level = self.risk_engine.level()
+        if (
+            risk_level == "CRITICAL"
+            or any(
+                self._active_conditions.get(name, False)
+                for name in critical_conditions
+            )
+        ):
             self.alert_status = "CRITICAL"
             self.alert_level = AlertLevel.CRITICAL
-        elif any(self._active_conditions.get(name, False) for name in warning_conditions):
+        elif (
+            risk_level == "WARNING"
+            or any(
+                self._active_conditions.get(name, False)
+                for name in warning_conditions
+            )
+        ):
             self.alert_status = "WARNING"
             self.alert_level = AlertLevel.WARNING
         else:
@@ -373,3 +587,12 @@ class BehaviorMonitor:
             "alert_level": self.alert_level,
             "stats": dict(self.stats),
         }
+
+    def finish_session(self, current_time=None):
+        """Return final session values for the stop event and daily report."""
+        end_time = time.monotonic() if current_time is None else float(current_time)
+        self.stats["session_duration_seconds"] = round(
+            max(0.0, end_time - self._session_start_time), 1
+        )
+        self._update_risk_statistics()
+        return dict(self.stats)

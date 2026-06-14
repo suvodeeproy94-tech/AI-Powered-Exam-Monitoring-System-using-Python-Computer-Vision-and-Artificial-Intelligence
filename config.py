@@ -15,6 +15,9 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 LOG_DIR = BASE_DIR / "logs"
 REPORT_DIR = BASE_DIR / "reports" / "output"
+EVIDENCE_DIR = BASE_DIR / "evidence"
+DATA_DIR = BASE_DIR / "data"
+GESTURE_DATA_DIR = DATA_DIR / "gesture_samples"
 ASSET_DIR = BASE_DIR / "assets"
 MODEL_DIR = ASSET_DIR / "models"
 CACHE_DIR = BASE_DIR / ".cache"
@@ -24,8 +27,17 @@ SYSTEM_LOG_FILE = LOG_DIR / "system.log"
 FACE_DETECTOR_MODEL = MODEL_DIR / "blaze_face_short_range.tflite"
 FACE_LANDMARKER_MODEL = MODEL_DIR / "face_landmarker.task"
 HAND_LANDMARKER_MODEL = MODEL_DIR / "hand_landmarker.task"
+GESTURE_CLASSIFIER_MODEL = MODEL_DIR / "gesture_classifier.joblib"
 
-for required_directory in (LOG_DIR, REPORT_DIR, ASSET_DIR, MODEL_DIR, CACHE_DIR):
+for required_directory in (
+    LOG_DIR,
+    REPORT_DIR,
+    EVIDENCE_DIR,
+    GESTURE_DATA_DIR,
+    ASSET_DIR,
+    MODEL_DIR,
+    CACHE_DIR,
+):
     required_directory.mkdir(parents=True, exist_ok=True)
 
 # Keep Matplotlib cache files inside the project on restricted Windows systems.
@@ -50,6 +62,11 @@ class AppSettings:
     enhance_low_light: bool = True
     low_light_threshold: float = 90.0
     blur_threshold: float = 45.0
+    calibration_enabled: bool = True
+    calibration_seconds: float = 5.0
+    calibration_min_valid_ratio: float = 0.70
+    minimum_face_size_ratio: float = 0.04
+    maximum_face_size_ratio: float = 0.45
 
     expected_face_count: int = 1
     face_missing_frames: int = 12
@@ -57,7 +74,15 @@ class AppSettings:
     face_outside_frames: int = 10
     look_away_frames: int = 15
     look_away_ratio_threshold: float = 0.18
+    head_pose_enabled: bool = True
+    head_yaw_threshold: float = 24.0
+    head_pitch_threshold: float = 20.0
+    gaze_tracking_enabled: bool = True
+    gaze_horizontal_threshold: float = 0.22
+    gaze_vertical_threshold: float = 0.25
+    eye_closed_threshold: float = 0.18
     edge_margin_ratio: float = 0.03
+    face_tracking_grace_frames: int = 3
 
     hand_movement_threshold: float = 40.0
     hand_movement_ratio_threshold: float = 0.28
@@ -74,6 +99,24 @@ class AppSettings:
     gesture_majority_ratio: float = 0.60
     gesture_min_confidence: float = 0.58
     minimum_face_area_ratio: float = 0.015
+    trained_gesture_model_enabled: bool = True
+    trained_gesture_min_confidence: float = 0.70
+
+    face_missing_seconds: float = 1.5
+    multiple_face_seconds: float = 0.7
+    face_outside_seconds: float = 1.2
+    look_away_seconds: float = 2.0
+    eyes_closed_seconds: float = 3.0
+    hand_cover_seconds: float = 1.0
+    excessive_hand_seconds: float = 1.2
+    frequent_movement_seconds: float = 1.2
+    suspicious_gesture_seconds: float = 1.0
+
+    evidence_capture_enabled: bool = True
+    evidence_minimum_level: str = "WARNING"
+    risk_decay_per_second: float = 1.5
+    risk_warning_threshold: float = 35.0
+    risk_critical_threshold: float = 70.0
 
     alert_cooldown_seconds: float = 5.0
     logging_enabled: bool = True
@@ -93,6 +136,18 @@ class AppSettings:
         self.max_hands = max(1, min(2, int(self.max_hands)))
         self.low_light_threshold = _clamp(self.low_light_threshold, 20.0, 180.0)
         self.blur_threshold = max(1.0, float(self.blur_threshold))
+        self.calibration_seconds = _clamp(self.calibration_seconds, 1.0, 30.0)
+        self.calibration_min_valid_ratio = _clamp(
+            self.calibration_min_valid_ratio, 0.20, 1.0
+        )
+        self.minimum_face_size_ratio = _clamp(
+            self.minimum_face_size_ratio, 0.01, 0.40
+        )
+        self.maximum_face_size_ratio = _clamp(
+            self.maximum_face_size_ratio,
+            self.minimum_face_size_ratio + 0.01,
+            0.95,
+        )
 
         self.expected_face_count = max(1, int(self.expected_face_count))
         self.face_missing_frames = max(1, int(self.face_missing_frames))
@@ -100,7 +155,19 @@ class AppSettings:
         self.face_outside_frames = max(1, int(self.face_outside_frames))
         self.look_away_frames = max(1, int(self.look_away_frames))
         self.look_away_ratio_threshold = _clamp(self.look_away_ratio_threshold, 0.05, 0.45)
+        self.head_yaw_threshold = _clamp(self.head_yaw_threshold, 8.0, 60.0)
+        self.head_pitch_threshold = _clamp(self.head_pitch_threshold, 8.0, 60.0)
+        self.gaze_horizontal_threshold = _clamp(
+            self.gaze_horizontal_threshold, 0.05, 0.50
+        )
+        self.gaze_vertical_threshold = _clamp(
+            self.gaze_vertical_threshold, 0.05, 0.50
+        )
+        self.eye_closed_threshold = _clamp(self.eye_closed_threshold, 0.08, 0.40)
         self.edge_margin_ratio = _clamp(self.edge_margin_ratio, 0.0, 0.20)
+        self.face_tracking_grace_frames = max(
+            0, min(15, int(self.face_tracking_grace_frames))
+        )
 
         self.hand_movement_threshold = max(1.0, float(self.hand_movement_threshold))
         self.hand_movement_ratio_threshold = _clamp(
@@ -130,6 +197,40 @@ class AppSettings:
         )
         self.minimum_face_area_ratio = _clamp(
             self.minimum_face_area_ratio, 0.001, 0.25
+        )
+        self.trained_gesture_min_confidence = _clamp(
+            self.trained_gesture_min_confidence, 0.40, 1.0
+        )
+
+        duration_names = (
+            "face_missing_seconds",
+            "multiple_face_seconds",
+            "face_outside_seconds",
+            "look_away_seconds",
+            "eyes_closed_seconds",
+            "hand_cover_seconds",
+            "excessive_hand_seconds",
+            "frequent_movement_seconds",
+            "suspicious_gesture_seconds",
+        )
+        for duration_name in duration_names:
+            duration_value = _clamp(getattr(self, duration_name), 0.1, 30.0)
+            setattr(self, duration_name, duration_value)
+
+        allowed_levels = {"INFO", "WARNING", "CRITICAL"}
+        self.evidence_minimum_level = str(self.evidence_minimum_level).upper()
+        if self.evidence_minimum_level not in allowed_levels:
+            self.evidence_minimum_level = "WARNING"
+        self.risk_decay_per_second = _clamp(
+            self.risk_decay_per_second, 0.0, 20.0
+        )
+        self.risk_warning_threshold = _clamp(
+            self.risk_warning_threshold, 5.0, 90.0
+        )
+        self.risk_critical_threshold = _clamp(
+            self.risk_critical_threshold,
+            self.risk_warning_threshold + 1.0,
+            100.0,
         )
         self.alert_cooldown_seconds = max(0.0, float(self.alert_cooldown_seconds))
         return self

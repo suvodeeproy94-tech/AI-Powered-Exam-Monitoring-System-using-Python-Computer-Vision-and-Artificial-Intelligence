@@ -25,6 +25,13 @@ class ReportGeneratorTests(unittest.TestCase):
             manager.info("MONITORING_STARTED", "Session started.")
             manager.warning("LOOKING_AWAY", "Student looked away.")
             manager.critical("FACE_MISSING", "No face visible.")
+            manager.info(
+                "SESSION_SUMMARY",
+                "Session complete.",
+                duration_seconds=120,
+                risk_score=45,
+                attention_percentage=88.5,
+            )
 
             generator = ReportGenerator(log_path, report_directory)
             rows = generator.load_logs(date.today())
@@ -36,6 +43,9 @@ class ReportGeneratorTests(unittest.TestCase):
             self.assertEqual(summary["warning_count"], 1)
             self.assertEqual(summary["critical_count"], 1)
             self.assertEqual(summary["face_violations"], 2)
+            self.assertEqual(summary["session_duration_seconds"], 120)
+            self.assertEqual(summary["attention_percentage"], 88.5)
+            self.assertEqual(summary["maximum_risk_score"], 45)
             self.assertTrue(csv_report_path.exists())
             self.assertTrue(pdf_report_path.exists())
             self.assertGreater(pdf_report_path.stat().st_size, 1000)

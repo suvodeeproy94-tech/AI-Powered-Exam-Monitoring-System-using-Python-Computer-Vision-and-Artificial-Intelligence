@@ -47,7 +47,31 @@ def build_gesture_summary(gesture_results):
     return f"{heading}: {' | '.join(gesture_parts)}"
 
 
-def draw_monitoring_overlay(frame, face_count, gesture_results):
+def build_analysis_summary(face_results=None, calibration_result=None):
+    """Return one short calibration or attention message for the video feed."""
+    if calibration_result and not calibration_result.complete:
+        progress = calibration_result.progress * 100
+        return f"Calibration {progress:.0f}%: {calibration_result.message}"
+    if not face_results or face_results.get("face_count", 0) != 1:
+        return "Attention: waiting for one face"
+
+    head_yaw = face_results.get("head_yaw", 0.0)
+    head_pitch = face_results.get("head_pitch", 0.0)
+    gaze_direction = face_results.get("gaze_direction", "Unknown")
+    reason = face_results.get("attention_reason", "Looking at screen")
+    return (
+        f"Head Y:{head_yaw:+.0f} P:{head_pitch:+.0f} | "
+        f"Gaze: {gaze_direction} | {reason}"
+    )
+
+
+def draw_monitoring_overlay(
+    frame,
+    face_count,
+    gesture_results,
+    face_results=None,
+    calibration_result=None,
+):
     """Draw the reference-style face and gesture summary on one frame."""
     if frame is None or frame.size == 0:
         raise ValueError("Cannot draw monitoring information on an empty frame.")
@@ -61,6 +85,7 @@ def draw_monitoring_overlay(frame, face_count, gesture_results):
 
     face_text, face_color = build_face_summary(face_count)
     gesture_text = build_gesture_summary(gesture_results)
+    analysis_text = build_analysis_summary(face_results, calibration_result)
     _draw_text_with_shadow(
         frame,
         face_text,
@@ -76,6 +101,14 @@ def draw_monitoring_overlay(frame, face_count, gesture_results):
         GESTURE_COLOR,
         font_scale,
         text_thickness,
+    )
+    _draw_text_with_shadow(
+        frame,
+        analysis_text,
+        (start_x, start_y + line_height * 2),
+        (255, 255, 255),
+        max(0.48, font_scale - 0.16),
+        1,
     )
     return frame
 

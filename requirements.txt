@@ -14,3 +14,4 @@ reportlab>=4.1,<5.0
 
 # Future machine-learning experiments documented in the project scope
 scikit-learn>=1.4,<2.0
+joblib>=1.4,<2.0

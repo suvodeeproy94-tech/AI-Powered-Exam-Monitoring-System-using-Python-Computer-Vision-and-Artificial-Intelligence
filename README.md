@@ -6,7 +6,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-Real--time%20Vision-5C3EE8?logo=opencv&logoColor=white)
 ![MediaPipe](https://img.shields.io/badge/MediaPipe-Face%20and%20Hands-0097A7)
-![Tests](https://img.shields.io/badge/Automated%20Tests-19%20Passing-22C55E)
+![Tests](https://img.shields.io/badge/Automated%20Tests-Passing-22C55E)
 
 ## Table of Contents
 
@@ -21,6 +21,8 @@
 - [Module Documentation](#module-documentation)
 - [Installation](#installation)
 - [Running the Project](#running-the-project)
+- [Accuracy Improvement System](#accuracy-improvement-system)
+- [Training the Gesture Model](#training-the-gesture-model)
 - [Using the Dashboard](#using-the-dashboard)
 - [Settings](#settings)
 - [Alert System](#alert-system)
@@ -52,8 +54,10 @@ into small modules so each part can be explained separately during a viva.
 - Face detection and continuous face counting
 - Face edge, missing face, head turn, and movement checks
 - Two-hand detection with 21 landmarks per hand
-- Eight hand gesture labels with confidence values
-- Stable alerts based on consecutive frames
+- Eight hand gesture labels with optional trained-model support
+- Personal camera, head-pose, and gaze calibration
+- Stable alerts based on real elapsed time
+- Explainable 0-100 risk score and alert evidence images
 - Information, warning, and critical alert levels
 - CSV activity logging
 - Daily CSV and PDF reports
@@ -89,17 +93,22 @@ invigilator. It records visible events so the invigilator can review them.
 | Face Detection | Draws a face box, confidence, and optional face landmarks |
 | Face Count | Expects exactly one face and detects zero or multiple faces |
 | Frame Position | Detects when the face stays near or outside a camera edge |
-| Look-Away Check | Uses nose position between both eyes as a simple head-turn estimate |
+| Head Pose | Uses OpenCV solvePnP to estimate head yaw, pitch, and roll |
+| Iris and Gaze Tracking | Measures iris direction and ignores normal short blinks |
+| Personal Calibration | Learns neutral head pose, gaze, face size, and camera conditions |
+| Stable Face Tracking | Keeps a primary face ID across short detector misses |
 | Hand Detection | Detects up to two hands and draws 21 landmarks and connections |
 | Camera Quality | Measures brightness and blur, and improves dark frames before detection |
 | Hand Movement | Measures wrist movement relative to hand size and smooths landmark noise |
-| Gesture Recognition | Uses finger joint angles, hand rotation support, and multi-frame voting for stable gesture labels |
+| Gesture Recognition | Uses tested geometric rules and a trained Random Forest when available |
 | Live Video Overlay | Shows a large face-count message, gesture name, green face box, white hand bones, and red landmark points |
 | Suspicious Activity | Checks face missing, multiple faces, looking away, hand covering face, fast hand movement, suspicious gestures, face outside frame, and frequent movement |
 | Alerts | Shows INFO, WARNING, and CRITICAL events with cooldown control |
 | Logging | Saves date, time, event type, alert type, and description to CSV |
 | Dashboard | Shows webcam feed, current statuses, statistics, and alert history |
 | Reports | Exports daily CSV and PDF reports |
+| Risk Score | Combines confirmed events into an explainable 0-100 score |
+| Evidence | Saves optional JPEG images for confirmed warnings and critical alerts |
 | Settings | Saves camera, resolution, confidence, alert, preview, and logging choices |
 
 ## Technology Stack
@@ -178,11 +187,72 @@ flowchart TD
     N --> E
 ```
 
-### Why Consecutive Frames Are Used
+### Why Time-Based Confirmation Is Used
 
-A single camera frame may be blurred or temporarily dark. The system waits for
-a condition to remain true for a configurable number of frames. This reduces
-false alerts while keeping the response fast.
+A single camera frame may be blurred or temporarily dark. During real webcam
+monitoring, the system waits for a condition to remain true for a configured
+number of seconds. This behaves consistently even when two computers process
+different numbers of frames per second.
+
+## Accuracy Improvement System
+
+### Personal Calibration
+
+Monitoring starts with a short calibration. The system measures the student's
+normal head direction, iris position, face size, lighting, sharpness, and face
+position. The camera feed shows simple instructions such as `Move closer`,
+`Increase the room lighting`, or `Keep your face in the center`. Suspicious
+activity alerts begin only after calibration finishes.
+
+### Head Pose, Iris, and Attention
+
+OpenCV `solvePnP()` estimates head yaw, pitch, and roll. MediaPipe iris
+landmarks estimate eye direction. The look-away rule uses both measurements.
+Long eye closure is monitored separately, while normal short blinks are ignored.
+
+### Risk Score and Evidence
+
+Each confirmed event adds a documented amount to a 0-100 risk score. Stronger
+events, such as multiple faces, add more risk than ordinary movement. The score
+slowly decreases during normal behavior. Confirmed warnings and critical alerts
+can save JPEG evidence in `evidence/`; this can be disabled in Settings.
+
+## Training the Gesture Model
+
+The application works immediately with geometric gesture rules. A trained model
+can improve accuracy after real examples are collected from different people,
+lighting conditions, distances, and hand angles.
+
+Collect one gesture class:
+
+```powershell
+.\.venv\Scripts\python.exe -m tools.collect_gesture_data --label "Open Palm" --participant P01 --lighting normal --angle front --samples 300
+```
+
+Repeat this for every gesture and participant. Then train the model:
+
+```powershell
+.\.venv\Scripts\python.exe -m tools.train_gesture_model
+```
+
+This creates the model at `assets/models/gesture_classifier.joblib` and writes
+accuracy metrics plus confusion-matrix files under
+`reports/output/gesture_model/`.
+
+When samples from at least three participants are available, evaluation keeps
+complete participants out of training. This gives a more honest measurement of
+how well the model works on a person it has not seen before.
+
+Evaluate an existing model without retraining:
+
+```powershell
+.\.venv\Scripts\python.exe -m tools.evaluate_gesture_model
+```
+
+The application loads the trained model automatically. When the model is
+missing or uncertain, it safely uses the existing rule-based recognizer.
+Only load a model created by this project. Python `joblib` model files should
+not be downloaded from an unknown or untrusted person.
 
 ## Project Structure
 
@@ -196,17 +266,24 @@ AI_Exam_Monitoring_System/
 |
 |-- detection/
 |   |-- __init__.py
+|   |-- face_analyzer.py
 |   |-- face_detector.py
+|   |-- frame_quality.py
 |   `-- hand_detector.py
 |
 |-- recognition/
 |   |-- __init__.py
-|   `-- gesture_recognition.py
+|   |-- gesture_features.py
+|   |-- gesture_recognition.py
+|   `-- trained_gesture_model.py
 |
 |-- monitoring/
 |   |-- __init__.py
 |   |-- alert_manager.py
-|   `-- behavior_monitor.py
+|   |-- behavior_monitor.py
+|   |-- calibration_manager.py
+|   |-- evidence_manager.py
+|   `-- risk_score.py
 |
 |-- gui/
 |   |-- __init__.py
@@ -226,6 +303,14 @@ AI_Exam_Monitoring_System/
 |   |-- test_detection_models.py
 |   |-- test_gesture_recognition.py
 |   `-- test_report_generator.py
+|
+|-- tools/
+|   |-- collect_gesture_data.py
+|   |-- train_gesture_model.py
+|   `-- evaluate_gesture_model.py
+|
+|-- data/gesture_samples/       Local private training data
+|-- evidence/                   Confirmed alert images
 |
 |-- logs/
 |   |-- activity_log.csv       Generated at runtime
@@ -435,10 +520,16 @@ The Settings window supports:
 - Camera resolution
 - Face detection confidence
 - Hand detection confidence
-- Missing-face confirmation frames
+- Missing-face confirmation time
+- Personal calibration time
+- Look-away confirmation time
 - Repeated-alert cooldown
 - Mirrored camera preview
 - Face landmark drawing
+- Head-pose monitoring
+- Iris and gaze tracking
+- Alert evidence images
+- Optional trained gesture model
 - Activity CSV logging
 
 Settings are saved in `settings.json`. This local file is ignored by Git because
@@ -461,6 +552,7 @@ camera choices may differ between computers.
 | `MULTIPLE_FACES` | More than one face remained visible |
 | `FACE_OUTSIDE_FRAME` | Face remained too close to a frame edge |
 | `LOOKING_AWAY` | Head-turn estimate remained above the threshold |
+| `EYES_CLOSED` | Both eyes remained closed long enough to exclude a blink |
 | `HAND_COVERING_FACE` | Hand box covered enough of the face box |
 | `EXCESSIVE_HAND_MOVEMENT` | Fast wrist movement continued across frames |
 | `FREQUENT_MOVEMENT` | Main face position changed rapidly across frames |
@@ -483,6 +575,10 @@ CSV columns:
 | Event Type | `FACE_MISSING` |
 | Alert Type | `CRITICAL` |
 | Description | `No face is visible...` |
+| Duration Seconds | `2.40` |
+| Risk Score | `42.0` |
+| Attention Percentage | `91.5` |
+| Evidence Path | `evidence/2026-06-14/...jpg` |
 
 Technical errors and application messages are stored in:
 
@@ -512,6 +608,10 @@ Press `Export PDF`. The report contains:
 - Face violation count
 - Gesture violation count
 - Movement violation count
+- Evidence snapshot count
+- Session duration and attention percentage
+- Maximum risk score
+- Total face-missing, look-away, and long-eye-closure durations
 - Full daily activity table
 
 PDF files are saved in:
@@ -522,20 +622,14 @@ reports/output/exam_report_YYYY-MM-DD.pdf
 
 ## Testing
 
-The automated tests do not open a webcam. They verify settings, gesture rules,
-alerts, behavior confirmation, logging, and reports.
+The automated tests do not open a webcam. They verify settings, calibration,
+head-analysis safety, stable face tracking, gesture rules and model features,
+time-based alerts, risk scoring, evidence storage, logging, and reports.
 
 Run all tests:
 
 ```powershell
 python -m unittest discover -s tests -v
-```
-
-Current result:
-
-```text
-Ran 19 tests
-OK
 ```
 
 ### Manual Camera Test
@@ -554,8 +648,8 @@ OK
 
 - Video frames are processed locally.
 - The current version does not upload webcam frames to a cloud service.
-- The current version does not store video recordings.
-- Activity logs contain event text and times, not raw images.
+- The current version does not store continuous video recordings.
+- Confirmed alert images are optional and stay in the local `evidence/` folder.
 - Generated logs and reports are ignored by Git.
 - No API key, password, token, or secret is required.
 - Users should be told clearly when monitoring is active.
@@ -644,22 +738,21 @@ files that need to be packaged correctly.
 ## Current Limitations
 
 - This is a monitoring assistant, not a replacement for a human invigilator.
-- Look-away detection is a simple head-turn estimate, not full eye tracking.
-- Gesture confidence is rule-based, not a trained model probability.
+- Gesture recognition uses rules until enough real data is collected and a
+  trained model is created locally.
 - Poor lighting, masks, camera blur, and low-quality webcams reduce accuracy.
 - No webcam-based computer vision system can guarantee perfect detection in
   every room, camera angle, hand pose, or lighting condition.
 - The system does not identify who the detected face belongs to.
 - The current version does not record video or audio.
 - It does not provide a remote cloud dashboard.
-- It does not use a trained anomaly-detection model yet.
+- Risk scoring is explainable rule-based support, not a final cheating verdict.
 - Physical webcam behavior cannot be fully verified by automated tests alone.
 
 ## Future Scope
 
-- Eye tracking with iris landmarks
-- Full head pose estimation
 - Voice and background-noise monitoring
+- Optional OpenCV YuNet secondary face detector
 - Emotion recognition with ethical safeguards
 - Trained behavior anomaly detection
 - Identity verification before an exam
@@ -667,7 +760,6 @@ files that need to be packaged correctly.
 - Remote invigilator dashboard
 - Multi-student monitoring server
 - Institution login and exam scheduling
-- Configurable evidence screenshots after user consent
 - Database-backed reports and analytics
 
 ## Viva Questions
@@ -694,14 +786,15 @@ newest frame and status from the camera thread to the GUI thread.
 
 ### How are false alerts reduced?
 
-The behavior monitor requires a condition to remain true for several
-consecutive frames and uses a cooldown before repeating the same event.
+The behavior monitor uses personal calibration, real elapsed time, landmark
+smoothing, stable face tracking, minimum confidence, and alert cooldowns.
 
 ### Is gesture confidence produced by machine learning?
 
-No. It is a fixed confidence assigned to an explainable geometric rule. A
-future version can replace it with a trained classifier and real validation
-metrics.
+It can come from either source. Without a local trained model, confidence comes
+from explainable geometric measurements. After real data is collected and the
+training tool creates a model, confidence comes from model probabilities. Low
+model confidence automatically falls back to the geometric recognizer.
 
 ### Where is exam activity stored?
 
@@ -712,13 +805,13 @@ Alerts are stored in `logs/activity_log.csv`. Technical messages are stored in
 
 **Suvodeep Roy**
 
-For project questions, use the GitHub repository issue tracker after a remote
-repository is connected.
+For project questions, use the connected GitHub repository issue tracker.
 
 ## References
 
 - [Python Documentation](https://docs.python.org/3/)
 - [OpenCV Documentation](https://docs.opencv.org/)
+- [OpenCV YuNet Model](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet)
 - [MediaPipe Python Setup](https://ai.google.dev/edge/mediapipe/solutions/setup_python)
 - [MediaPipe Package Metadata](https://pypi.org/project/mediapipe/)
 - [CustomTkinter Documentation](https://customtkinter.tomschimansky.com/documentation/)

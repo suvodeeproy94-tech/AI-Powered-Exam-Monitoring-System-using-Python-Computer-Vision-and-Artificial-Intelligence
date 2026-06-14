@@ -38,6 +38,9 @@ logs/*.log
 reports/output/*
 !logs/.gitkeep
 !reports/output/.gitkeep
+evidence/*
+data/gesture_samples/*.csv
+assets/models/gesture_classifier.joblib
 
 # Test, type-checking, and coverage output
 .pytest_cache/

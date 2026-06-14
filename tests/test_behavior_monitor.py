@@ -147,6 +147,66 @@ class BehaviorMonitorTests(unittest.TestCase):
         count = count_landmarks_inside_box(landmark_points, (0, 0, 100, 100))
         self.assertEqual(count, 2)
 
+    def test_runtime_confirmation_uses_seconds_not_frame_count(self):
+        self.settings.face_missing_frames = 1
+        self.settings.face_missing_seconds = 2.0
+        missing_face = normal_face_results()
+        missing_face["face_count"] = 0
+        missing_face["face_bboxes"] = []
+
+        first_alerts = self.monitor.analyse(
+            missing_face, normal_hand_results(), [], current_time=0.0
+        )
+        early_alerts = self.monitor.analyse(
+            missing_face, normal_hand_results(), [], current_time=1.5
+        )
+        confirmed_alerts = self.monitor.analyse(
+            missing_face, normal_hand_results(), [], current_time=2.1
+        )
+
+        self.assertEqual(first_alerts, [])
+        self.assertEqual(early_alerts, [])
+        self.assertIn(
+            "FACE_MISSING", [alert.event_type for alert in confirmed_alerts]
+        )
+
+    def test_normal_blink_does_not_create_eye_closed_alert(self):
+        closed_eyes = normal_face_results()
+        closed_eyes["eyes_closed"] = True
+        self.settings.eyes_closed_seconds = 3.0
+
+        first_alerts = self.monitor.analyse(
+            closed_eyes, normal_hand_results(), [], current_time=0.0
+        )
+        blink_alerts = self.monitor.analyse(
+            closed_eyes, normal_hand_results(), [], current_time=0.4
+        )
+
+        self.assertNotIn(
+            "EYES_CLOSED",
+            [alert.event_type for alert in first_alerts + blink_alerts],
+        )
+
+    def test_repeated_alert_logs_only_new_condition_duration(self):
+        """Avoid counting the same continuous incident time more than once."""
+        missing_face = normal_face_results()
+        missing_face["face_count"] = 0
+        missing_face["face_bboxes"] = []
+        self.settings.face_missing_seconds = 1.0
+
+        self.monitor.analyse(
+            missing_face, normal_hand_results(), [], current_time=0.0
+        )
+        first_alerts = self.monitor.analyse(
+            missing_face, normal_hand_results(), [], current_time=1.2
+        )
+        repeated_alerts = self.monitor.analyse(
+            missing_face, normal_hand_results(), [], current_time=2.0
+        )
+
+        self.assertAlmostEqual(first_alerts[0].duration_seconds, 1.2)
+        self.assertAlmostEqual(repeated_alerts[0].duration_seconds, 0.8)
+
 
 if __name__ == "__main__":
     unittest.main()

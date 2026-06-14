@@ -35,6 +35,7 @@ FACE_EVENTS = {
     "MULTIPLE_FACES",
     "FACE_OUTSIDE_FRAME",
     "LOOKING_AWAY",
+    "EYES_CLOSED",
     "HAND_COVERING_FACE",
 }
 GESTURE_EVENTS = {"SUSPICIOUS_GESTURE"}
@@ -96,13 +97,47 @@ class ReportGenerator:
             "event_type": row.get("event_type", "UNKNOWN").strip() or "UNKNOWN",
             "alert_type": alert_type or "INFO",
             "description": row.get("description", "").strip(),
+            "duration_seconds": self._safe_float(row.get("duration_seconds")),
+            "risk_score": self._safe_float(row.get("risk_score")),
+            "attention_percentage": self._safe_float(
+                row.get("attention_percentage"), 100.0
+            ),
+            "evidence_path": row.get("evidence_path", "").strip(),
         }
+
+    def _safe_float(self, value, default=0.0):
+        """Convert optional old or new CSV values without breaking reports."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
 
     def build_summary(self, activity_rows):
         """Calculate the counts required by the daily monitoring report."""
         warning_count = self._count_by_value(activity_rows, "alert_type", "WARNING")
         critical_count = self._count_by_value(activity_rows, "alert_type", "CRITICAL")
         information_count = self._count_by_value(activity_rows, "alert_type", "INFO")
+
+        summary_rows = [
+            row for row in activity_rows if row["event_type"] == "SESSION_SUMMARY"
+        ]
+        session_duration = sum(
+            row["duration_seconds"] for row in summary_rows
+        )
+        if session_duration > 0:
+            attention_percentage = sum(
+                row["attention_percentage"] * row["duration_seconds"]
+                for row in summary_rows
+            ) / session_duration
+        elif summary_rows:
+            attention_percentage = sum(
+                row["attention_percentage"] for row in summary_rows
+            ) / len(summary_rows)
+        else:
+            attention_percentage = 100.0
+        maximum_risk_score = max(
+            (row["risk_score"] for row in activity_rows), default=0.0
+        )
 
         return {
             "total_alerts": warning_count + critical_count,
@@ -112,6 +147,21 @@ class ReportGenerator:
             "face_violations": self._count_event_group(activity_rows, FACE_EVENTS),
             "gesture_violations": self._count_event_group(activity_rows, GESTURE_EVENTS),
             "movement_violations": self._count_event_group(activity_rows, MOVEMENT_EVENTS),
+            "evidence_snapshots": sum(
+                1 for row in activity_rows if row["evidence_path"]
+            ),
+            "session_duration_seconds": round(session_duration, 1),
+            "attention_percentage": round(attention_percentage, 1),
+            "maximum_risk_score": round(maximum_risk_score, 1),
+            "face_missing_duration_seconds": round(
+                self._sum_event_duration(activity_rows, "FACE_MISSING"), 1
+            ),
+            "look_away_duration_seconds": round(
+                self._sum_event_duration(activity_rows, "LOOKING_AWAY"), 1
+            ),
+            "eyes_closed_duration_seconds": round(
+                self._sum_event_duration(activity_rows, "EYES_CLOSED"), 1
+            ),
         }
 
     def _count_by_value(self, rows, key, expected_value):
@@ -121,6 +171,14 @@ class ReportGenerator:
     def _count_event_group(self, rows, event_names):
         """Count rows whose event type belongs to one report category."""
         return sum(1 for row in rows if row.get("event_type") in event_names)
+
+    def _sum_event_duration(self, rows, event_name):
+        """Add confirmed durations for one event across the selected day."""
+        return sum(
+            row.get("duration_seconds", 0.0)
+            for row in rows
+            if row.get("event_type") == event_name
+        )
 
     def export_csv(self, target_date=None):
         """Create a readable daily CSV report and return its full path."""
@@ -140,7 +198,19 @@ class ReportGenerator:
                 writer.writerow([metric_name.replace("_", " ").title(), metric_value])
 
             writer.writerow([])
-            writer.writerow(["Date", "Time", "Alert Type", "Event Type", "Description"])
+            writer.writerow(
+                [
+                    "Date",
+                    "Time",
+                    "Alert Type",
+                    "Event Type",
+                    "Duration Seconds",
+                    "Risk Score",
+                    "Attention Percentage",
+                    "Evidence Path",
+                    "Description",
+                ]
+            )
             for row in activity_rows:
                 writer.writerow(
                     [
@@ -148,6 +218,10 @@ class ReportGenerator:
                         row["time"],
                         row["alert_type"],
                         row["event_type"],
+                        row["duration_seconds"],
+                        row["risk_score"],
+                        row["attention_percentage"],
+                        row["evidence_path"],
                         row["description"],
                     ]
                 )
@@ -222,7 +296,7 @@ class ReportGenerator:
         story.append(Paragraph("Activity Details", styles["Heading2"]))
         if activity_rows:
             activity_table_data = [
-                ["Time", "Type", "Event", "Description"]
+                ["Time", "Type", "Event", "Risk", "Evidence", "Description"]
             ]
             for row in activity_rows:
                 activity_table_data.append(
@@ -230,13 +304,15 @@ class ReportGenerator:
                         row["time"],
                         row["alert_type"],
                         row["event_type"].replace("_", " ").title(),
+                        f"{row['risk_score']:.0f}",
+                        "Yes" if row["evidence_path"] else "No",
                         Paragraph(escape(row["description"]), small_style),
                     ]
                 )
 
             activity_table = Table(
                 activity_table_data,
-                colWidths=[2.2 * cm, 2.2 * cm, 4.2 * cm, 8.4 * cm],
+                colWidths=[1.7 * cm, 1.8 * cm, 3.5 * cm, 1.3 * cm, 1.4 * cm, 7.3 * cm],
                 repeatRows=1,
             )
             self._style_table(activity_table, font_size=7)

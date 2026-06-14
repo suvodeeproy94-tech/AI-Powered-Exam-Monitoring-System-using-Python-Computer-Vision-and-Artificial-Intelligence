@@ -76,17 +76,40 @@ class SettingsDialog(ctk.CTkToplevel):
             12,
         )
 
-        self.alert_frames_var = tk.IntVar(
-            value=self.updated_settings.face_missing_frames
+        self.face_missing_seconds_var = tk.DoubleVar(
+            value=self.updated_settings.face_missing_seconds
         )
         self._add_slider(
             container,
-            "Missing Face Alert Frames",
-            self.alert_frames_var,
-            3,
-            60,
-            19,
-            integer=True,
+            "Missing Face Alert Time",
+            self.face_missing_seconds_var,
+            0.5,
+            5,
+            18,
+        )
+
+        self.calibration_seconds_var = tk.DoubleVar(
+            value=self.updated_settings.calibration_seconds
+        )
+        self._add_slider(
+            container,
+            "Calibration Time (seconds)",
+            self.calibration_seconds_var,
+            2,
+            15,
+            13,
+        )
+
+        self.look_away_seconds_var = tk.DoubleVar(
+            value=self.updated_settings.look_away_seconds
+        )
+        self._add_slider(
+            container,
+            "Look-Away Alert Time",
+            self.look_away_seconds_var,
+            0.5,
+            5,
+            18,
         )
 
         self.cooldown_var = tk.DoubleVar(
@@ -112,6 +135,37 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         self._add_switch(
             container, "Improve Detection in Low Light", self.enhance_var
+        )
+
+        self.calibration_var = tk.BooleanVar(
+            value=self.updated_settings.calibration_enabled
+        )
+        self._add_switch(
+            container, "Run Personal Calibration", self.calibration_var
+        )
+
+        self.head_pose_var = tk.BooleanVar(
+            value=self.updated_settings.head_pose_enabled
+        )
+        self._add_switch(container, "Use Head Pose Detection", self.head_pose_var)
+
+        self.gaze_var = tk.BooleanVar(
+            value=self.updated_settings.gaze_tracking_enabled
+        )
+        self._add_switch(container, "Use Iris and Gaze Tracking", self.gaze_var)
+
+        self.evidence_var = tk.BooleanVar(
+            value=self.updated_settings.evidence_capture_enabled
+        )
+        self._add_switch(
+            container, "Save Alert Evidence Images", self.evidence_var
+        )
+
+        self.trained_model_var = tk.BooleanVar(
+            value=self.updated_settings.trained_gesture_model_enabled
+        )
+        self._add_switch(
+            container, "Use Trained Gesture Model When Available", self.trained_model_var
         )
 
         self.logging_var = tk.BooleanVar(value=self.updated_settings.logging_enabled)
@@ -208,13 +262,28 @@ class SettingsDialog(ctk.CTkToplevel):
         self.updated_settings.hand_detection_confidence = round(
             self.hand_confidence_var.get(), 2
         )
-        self.updated_settings.face_missing_frames = int(self.alert_frames_var.get())
+        self.updated_settings.face_missing_seconds = round(
+            self.face_missing_seconds_var.get(), 1
+        )
+        self.updated_settings.calibration_seconds = round(
+            self.calibration_seconds_var.get(), 1
+        )
+        self.updated_settings.look_away_seconds = round(
+            self.look_away_seconds_var.get(), 1
+        )
         self.updated_settings.alert_cooldown_seconds = round(
             self.cooldown_var.get(), 1
         )
         self.updated_settings.mirror_camera = bool(self.mirror_var.get())
         self.updated_settings.draw_face_mesh = bool(self.mesh_var.get())
         self.updated_settings.enhance_low_light = bool(self.enhance_var.get())
+        self.updated_settings.calibration_enabled = bool(self.calibration_var.get())
+        self.updated_settings.head_pose_enabled = bool(self.head_pose_var.get())
+        self.updated_settings.gaze_tracking_enabled = bool(self.gaze_var.get())
+        self.updated_settings.evidence_capture_enabled = bool(self.evidence_var.get())
+        self.updated_settings.trained_gesture_model_enabled = bool(
+            self.trained_model_var.get()
+        )
         self.updated_settings.logging_enabled = bool(self.logging_var.get())
         self.parent.apply_settings(self.updated_settings)
         self.destroy()

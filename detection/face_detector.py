@@ -10,6 +10,7 @@ import time
 import cv2
 
 from config import FACE_DETECTOR_MODEL, FACE_LANDMARKER_MODEL
+from detection.face_analyzer import FaceAnalyzer
 from mediapipe.tasks import python as media_pipe_python
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.vision.core.image import Image as MediaPipeImage
@@ -47,11 +48,16 @@ class FaceDetector:
         self.face_landmarker = vision.FaceLandmarker.create_from_options(
             landmarker_options
         )
+        self.face_analyzer = FaceAnalyzer(settings)
         self.face_count = 0
         self.face_bboxes = []
         self.last_results = self._empty_results()
         self._previous_face_center = None
         self._smoothed_face_center = None
+        self._missed_face_frames = 0
+        self._last_primary_face_box = None
+        self._next_track_id = 1
+        self._active_track_id = None
         self._last_timestamp_ms = 0
 
     def _check_model_files(self):
@@ -70,6 +76,7 @@ class FaceDetector:
         """Return a complete result object for frames with no visible face."""
         return {
             "face_count": 0,
+            "raw_face_count": 0,
             "face_bboxes": [],
             "face_confidences": [],
             "face_visible": False,
@@ -79,6 +86,10 @@ class FaceDetector:
             "face_center": None,
             "face_movement": 0.0,
             "face_movement_ratio": 0.0,
+            "stable_face_visible": False,
+            "primary_face_area_ratio": 0.0,
+            "primary_face_track_id": None,
+            **self.face_analyzer.empty_results(),
         }
 
     def process_frame(self, frame):
@@ -147,7 +158,8 @@ class FaceDetector:
                     confidence,
                 )
 
-        self.face_count = len(face_bboxes)
+        raw_face_count = len(face_bboxes)
+        self.face_count = raw_face_count
         self.face_bboxes = face_bboxes
 
         face_landmark_groups = landmark_result.face_landmarks
@@ -160,19 +172,35 @@ class FaceDetector:
             )
 
         look_away_ratio = 0.0
-        is_looking_away = False
+        legacy_looking_away = False
         if face_landmark_groups:
             look_away_ratio = self._calculate_look_away_ratio(
                 face_landmark_groups[0], frame_width
             )
-            is_looking_away = (
+            legacy_looking_away = (
                 look_away_ratio >= self.settings.look_away_ratio_threshold
             )
 
+        detailed_analysis = self.face_analyzer.analyse(
+            face_landmark_groups[0] if face_landmark_groups else None,
+            frame_width,
+            frame_height,
+        )
+        detailed_analysis["is_looking_away"] = (
+            detailed_analysis.get("is_looking_away", False)
+            or legacy_looking_away
+        )
+
         face_center = self._get_primary_face_center(face_bboxes)
         primary_face_box = self._get_primary_face_box(face_bboxes)
+        stable_face_visible, tracked_face_box, track_id = self._update_face_tracking(
+            primary_face_box
+        )
         face_movement, face_movement_ratio = self._calculate_face_movement(
             face_center, primary_face_box
+        )
+        primary_face_area_ratio = self._get_face_area_ratio(
+            primary_face_box, frame_width, frame_height
         )
         self._draw_face_boxes(
             annotated_frame,
@@ -183,15 +211,21 @@ class FaceDetector:
 
         self.last_results = {
             "face_count": self.face_count,
+            "raw_face_count": raw_face_count,
             "face_bboxes": face_bboxes,
             "face_confidences": face_confidences,
             "face_visible": self.face_count > 0,
+            "stable_face_visible": stable_face_visible,
+            "tracked_face_box": tracked_face_box,
+            "primary_face_track_id": track_id,
             "face_outside_frame": face_outside_frame,
-            "is_looking_away": is_looking_away,
+            "is_looking_away": detailed_analysis["is_looking_away"],
             "look_away_ratio": round(look_away_ratio, 3),
             "face_center": face_center,
             "face_movement": round(face_movement, 2),
             "face_movement_ratio": round(face_movement_ratio, 3),
+            "primary_face_area_ratio": round(primary_face_area_ratio, 4),
+            **detailed_analysis,
         }
         return annotated_frame, self.last_results.copy()
 
@@ -235,6 +269,46 @@ class FaceDetector:
         if not face_bboxes:
             return None
         return max(face_bboxes, key=lambda box: box[2] * box[3])
+
+    def _update_face_tracking(self, primary_face_box):
+        """Keep the primary face stable across a few missed detector frames."""
+        if primary_face_box is not None:
+            self._missed_face_frames = 0
+            if self._last_primary_face_box is None:
+                self._last_primary_face_box = primary_face_box
+                self._active_track_id = self._next_track_id
+                self._next_track_id += 1
+            else:
+                smoothing_weight = 0.45
+                self._last_primary_face_box = tuple(
+                    int(previous + (current - previous) * smoothing_weight)
+                    for previous, current in zip(
+                        self._last_primary_face_box, primary_face_box
+                    )
+                )
+            return True, self._last_primary_face_box, self._active_track_id
+
+        self._missed_face_frames += 1
+        if self._missed_face_frames <= self.settings.face_tracking_grace_frames:
+            return (
+                self._last_primary_face_box is not None,
+                self._last_primary_face_box,
+                self._active_track_id,
+            )
+        self._last_primary_face_box = None
+        self._active_track_id = None
+        return False, None, None
+
+    def _get_face_area_ratio(self, face_box, frame_width, frame_height):
+        """Return how much of the camera frame is occupied by the main face."""
+        if face_box is None:
+            return 0.0
+        _, _, face_width, face_height = face_box
+        return face_width * face_height / max(frame_width * frame_height, 1)
+
+    def set_calibration_profile(self, profile):
+        """Apply the completed personal neutral pose to detailed face analysis."""
+        self.face_analyzer.set_calibration_profile(profile)
 
     def _calculate_face_movement(self, face_center, face_box):
         """Measure stable face movement relative to the visible face size."""
