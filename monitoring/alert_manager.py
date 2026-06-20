@@ -37,6 +37,11 @@ LEVEL_COLORS = {
 }
 
 CSV_FIELDS = [
+    "session_id",
+    "student_name",
+    "roll_number",
+    "exam_name",
+    "subject_name",
     "date",
     "time",
     "event_type",
@@ -87,6 +92,11 @@ class Alert:
     level: str
     event_type: str
     description: str
+    session_id: str = ""
+    student_name: str = ""
+    roll_number: str = ""
+    exam_name: str = ""
+    subject_name: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
     duration_seconds: float = 0.0
     risk_score: float = 0.0
@@ -96,6 +106,11 @@ class Alert:
     def to_dict(self):
         """Convert the alert into the exact activity CSV column format."""
         return {
+            "session_id": self.session_id,
+            "student_name": self.student_name,
+            "roll_number": self.roll_number,
+            "exam_name": self.exam_name,
+            "subject_name": self.subject_name,
             "date": self.timestamp.strftime("%Y-%m-%d"),
             "time": self.timestamp.strftime("%H:%M:%S"),
             "event_type": self.event_type,
@@ -131,6 +146,8 @@ class AlertManager:
         self.max_history = max(1, int(max_history))
         self.alert_history = []
         self._last_alert_time = {}
+        self._current_session = None
+        self._session_manager = None
         self._lock = threading.RLock()
 
         if self.logging_enabled:
@@ -180,6 +197,40 @@ class AlertManager:
         except OSError as error:
             logger.error("Activity log could not be updated: %s", error)
 
+    def set_session_manager(self, session_manager):
+        """Attach the optional SQLite session storage."""
+        with self._lock:
+            self._session_manager = session_manager
+
+    def set_current_session(self, session):
+        """Attach student and exam details to future alerts."""
+        with self._lock:
+            self._current_session = session
+
+    def clear_current_session(self):
+        """Remove session details after the monitoring session ends."""
+        with self._lock:
+            self._current_session = None
+
+    def _session_metadata(self):
+        """Return safe session values for one alert record."""
+        session = self._current_session
+        if session is None:
+            return {
+                "session_id": "",
+                "student_name": "",
+                "roll_number": "",
+                "exam_name": "",
+                "subject_name": "",
+            }
+        return {
+            "session_id": session.session_id,
+            "student_name": session.student_name,
+            "roll_number": session.roll_number,
+            "exam_name": session.exam_name,
+            "subject_name": session.subject_name,
+        }
+
     def _is_in_cooldown(self, event_type, current_time):
         """Check whether the same event was recently recorded."""
         last_alert_time = self._last_alert_time.get(event_type, 0.0)
@@ -218,6 +269,7 @@ class AlertManager:
                 level=level,
                 event_type=event_type,
                 description=description,
+                **self._session_metadata(),
                 duration_seconds=max(0.0, float(duration_seconds)),
                 risk_score=max(0.0, min(100.0, float(risk_score))),
                 attention_percentage=max(
@@ -231,6 +283,8 @@ class AlertManager:
 
             self._last_alert_time[event_type] = current_time
             self._write_to_csv(alert)
+            if self._session_manager is not None:
+                self._session_manager.store_alert(alert)
 
         log_function = {
             AlertLevel.INFO: logger.info,

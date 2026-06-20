@@ -52,6 +52,8 @@ into small modules so each part can be explained separately during a viva.
 ### Project Highlights
 
 - Real-time webcam monitoring
+- Student and exam session details before monitoring
+- Local SQLite session database for review-ready records
 - YuNet face detection with automatic MediaPipe fallback
 - Continuous face counting and confidence display
 - Face edge, missing face, head turn, and movement checks
@@ -108,6 +110,8 @@ invigilator. It records visible events so the invigilator can review them.
 | Alerts | Shows INFO, WARNING, and CRITICAL events with cooldown control |
 | Logging | Saves date, time, event type, alert type, and description to CSV |
 | Dashboard | Shows webcam feed, current statuses, statistics, and alert history |
+| Exam Session | Collects student name, roll number, exam name, and subject before monitoring |
+| Local Database | Stores exam sessions and alert records in SQLite for future review panels |
 | Reports | Exports daily CSV and PDF reports |
 | Risk Score | Combines confirmed events into an explainable 0-100 score |
 | Evidence | Saves optional JPEG images for confirmed warnings and critical alerts |
@@ -127,6 +131,7 @@ invigilator. It records visible events so the invigilator can review them.
 | Numerical Data | NumPy | OpenCV frame arrays and numerical image operations |
 | PDF Reports | ReportLab | Creates formatted daily PDF reports |
 | Logging | Python logging | Console messages and rotating system log files |
+| Local Database | SQLite | Stores exam session details and alert records locally |
 | Testing | unittest | Automated module tests |
 
 ### Extension Packages
@@ -576,6 +581,11 @@ CSV columns:
 
 | Column | Example |
 |---|---|
+| Session ID | `a1b2c3...` |
+| Student Name | `Suvodeep Roy` |
+| Roll Number | `MCA-01` |
+| Exam Name | `Internal Exam` |
+| Subject Name | `Artificial Intelligence` |
 | Date | `2026-06-13` |
 | Time | `10:15:20` |
 | Event Type | `FACE_MISSING` |
@@ -594,6 +604,31 @@ logs/system.log
 
 The system log rotates automatically so one file does not grow forever.
 
+## Exam Session Database
+
+Before monitoring starts, the dashboard asks for:
+
+- Student name
+- Roll number
+- Exam name
+- Subject name
+
+These details are stored with every alert. The local SQLite database is saved at:
+
+```text
+data/exam_monitoring.db
+```
+
+The database keeps two simple tables:
+
+| Table | Purpose |
+|---|---|
+| `exam_sessions` | Stores one row for each monitoring session |
+| `alert_records` | Stores alerts connected with the active exam session |
+
+The database file is ignored by Git because it may contain private student and
+exam information.
+
 ## Report Generation
 
 ### CSV Report
@@ -608,6 +643,7 @@ reports/output/exam_report_YYYY-MM-DD.csv
 
 Press `Export PDF`. The report contains:
 
+- Student and exam session details when available
 - Report date and generation time
 - Total warning and critical alerts
 - Information event count

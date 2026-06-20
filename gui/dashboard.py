@@ -34,11 +34,13 @@ from detection.frame_quality import prepare_detection_frame
 from detection.hand_detector import HandDetector
 from gui.components import AlertRow, StatusBadge
 from gui.settings_dialog import SettingsDialog
+from gui.session_dialog import SessionDetailsDialog
 from gui.video_overlay import draw_monitoring_overlay
 from monitoring.alert_manager import AlertLevel, AlertManager, LEVEL_COLORS, logger
 from monitoring.behavior_monitor import BehaviorMonitor
 from monitoring.calibration_manager import CalibrationManager
 from monitoring.evidence_manager import EvidenceManager
+from monitoring.session_manager import SessionManager
 from recognition.gesture_recognition import MultiHandGestureRecognizer
 from reports.report_generator import ReportGenerator
 
@@ -56,6 +58,8 @@ class Dashboard(ctk.CTk):
             cooldown_seconds=self.settings.alert_cooldown_seconds,
             logging_enabled=self.settings.logging_enabled,
         )
+        self.session_manager = SessionManager()
+        self.alert_manager.set_session_manager(self.session_manager)
         self.evidence_manager = EvidenceManager(self.settings)
         self.behavior_monitor = BehaviorMonitor(
             self.alert_manager,
@@ -65,6 +69,7 @@ class Dashboard(ctk.CTk):
         self.calibration_manager = CalibrationManager(self.settings)
         self.gesture_recognizer = MultiHandGestureRecognizer(self.settings)
         self.report_generator = ReportGenerator()
+        self.current_session = None
 
         self.face_detector = None
         self.hand_detector = None
@@ -333,6 +338,10 @@ class Dashboard(ctk.CTk):
             )
             return
 
+        session_details = self._ask_session_details()
+        if session_details is None:
+            return
+
         try:
             self._release_detectors()
             self.face_detector = FaceDetector(self.settings)
@@ -346,6 +355,13 @@ class Dashboard(ctk.CTk):
             )
             return
 
+        self.current_session = self.session_manager.create_session(
+            session_details["student_name"],
+            session_details["roll_number"],
+            session_details["exam_name"],
+            session_details["subject_name"],
+        )
+        self.alert_manager.set_current_session(self.current_session)
         session_start_time = time.monotonic()
         self.behavior_monitor.reset_session(session_start_time)
         self.calibration_manager.settings = self.settings
@@ -369,6 +385,12 @@ class Dashboard(ctk.CTk):
             daemon=True,
         )
         self._capture_thread.start()
+
+    def _ask_session_details(self):
+        """Open the session dialog and return validated form values."""
+        dialog = SessionDetailsDialog(self)
+        self.wait_window(dialog)
+        return dialog.result
 
     def _capture_loop(self):
         """Read camera frames and run all detection modules in the background."""
@@ -641,6 +663,8 @@ class Dashboard(ctk.CTk):
         """Restore stopped controls after normal completion or a camera error."""
         self._log_session_summary()
         self._monitoring = False
+        self.alert_manager.clear_current_session()
+        self.current_session = None
         self._start_button.configure(state="normal")
         self._stop_button.configure(state="disabled")
         self._global_badge.set_status("STOPPED", COLOR_NEUTRAL)
@@ -651,6 +675,11 @@ class Dashboard(ctk.CTk):
         if self._session_summary_logged or not self._monitoring:
             return
         session_stats = self.behavior_monitor.finish_session()
+        if self.current_session is not None:
+            self.session_manager.finish_session(
+                self.current_session.session_id,
+                session_stats,
+            )
         description = (
             f"Session duration {session_stats['session_duration_seconds']:.1f} seconds; "
             f"attention {session_stats['attention_percentage']:.1f}%; "

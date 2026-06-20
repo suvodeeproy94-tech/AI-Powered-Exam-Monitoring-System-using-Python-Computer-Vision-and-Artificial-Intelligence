@@ -92,6 +92,11 @@ class ReportGenerator:
             return None
 
         return {
+            "session_id": row.get("session_id", "").strip(),
+            "student_name": row.get("student_name", "").strip(),
+            "roll_number": row.get("roll_number", "").strip(),
+            "exam_name": row.get("exam_name", "").strip(),
+            "subject_name": row.get("subject_name", "").strip(),
             "date": row_date,
             "time": row_time,
             "event_type": row.get("event_type", "UNKNOWN").strip() or "UNKNOWN",
@@ -138,8 +143,16 @@ class ReportGenerator:
         maximum_risk_score = max(
             (row["risk_score"] for row in activity_rows), default=0.0
         )
+        session_count = len(
+            {
+                row["session_id"]
+                for row in activity_rows
+                if row.get("session_id")
+            }
+        )
 
         return {
+            "exam_sessions": session_count,
             "total_alerts": warning_count + critical_count,
             "information_events": information_count,
             "warning_count": warning_count,
@@ -202,6 +215,10 @@ class ReportGenerator:
                 [
                     "Date",
                     "Time",
+                    "Student Name",
+                    "Roll Number",
+                    "Exam Name",
+                    "Subject Name",
                     "Alert Type",
                     "Event Type",
                     "Duration Seconds",
@@ -216,6 +233,10 @@ class ReportGenerator:
                     [
                         row["date"],
                         row["time"],
+                        row["student_name"],
+                        row["roll_number"],
+                        row["exam_name"],
+                        row["subject_name"],
                         row["alert_type"],
                         row["event_type"],
                         row["duration_seconds"],
@@ -275,6 +296,10 @@ class ReportGenerator:
                 f"Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                 styles["BodyText"],
             ),
+            Paragraph(
+                self._build_session_line(activity_rows),
+                styles["BodyText"],
+            ),
             HRFlowable(width="100%", thickness=1, color=colors.HexColor("#94a3b8")),
             Spacer(1, 0.35 * cm),
             Paragraph("Monitoring Summary", styles["Heading2"]),
@@ -296,12 +321,16 @@ class ReportGenerator:
         story.append(Paragraph("Activity Details", styles["Heading2"]))
         if activity_rows:
             activity_table_data = [
-                ["Time", "Type", "Event", "Risk", "Evidence", "Description"]
+                ["Time", "Student", "Type", "Event", "Risk", "Evidence", "Description"]
             ]
             for row in activity_rows:
                 activity_table_data.append(
                     [
                         row["time"],
+                        Paragraph(
+                            escape(self._student_label(row)),
+                            small_style,
+                        ),
                         row["alert_type"],
                         row["event_type"].replace("_", " ").title(),
                         f"{row['risk_score']:.0f}",
@@ -312,7 +341,15 @@ class ReportGenerator:
 
             activity_table = Table(
                 activity_table_data,
-                colWidths=[1.7 * cm, 1.8 * cm, 3.5 * cm, 1.3 * cm, 1.4 * cm, 7.3 * cm],
+                colWidths=[
+                    1.5 * cm,
+                    2.5 * cm,
+                    1.6 * cm,
+                    3.2 * cm,
+                    1.1 * cm,
+                    1.2 * cm,
+                    5.9 * cm,
+                ],
                 repeatRows=1,
             )
             self._style_table(activity_table, font_size=7)
@@ -324,6 +361,33 @@ class ReportGenerator:
 
         document.build(story)
         return report_path.resolve()
+
+    def _build_session_line(self, activity_rows):
+        """Create a short student and exam line for the PDF header."""
+        sessions = {
+            row["session_id"]: row
+            for row in activity_rows
+            if row.get("session_id")
+        }
+        if not sessions:
+            return "Session: No session details were recorded for this report."
+        if len(sessions) > 1:
+            return f"Sessions covered: {len(sessions)} exam sessions."
+
+        session_row = next(iter(sessions.values()))
+        return (
+            "Session: "
+            f"{escape(session_row['student_name'] or 'Unknown Student')} "
+            f"({escape(session_row['roll_number'] or 'No Roll Number')}) | "
+            f"{escape(session_row['exam_name'] or 'Unknown Exam')} | "
+            f"{escape(session_row['subject_name'] or 'Unknown Subject')}"
+        )
+
+    def _student_label(self, row):
+        """Return a compact student label for report tables."""
+        student_name = row.get("student_name") or "Unknown"
+        roll_number = row.get("roll_number") or "No Roll"
+        return f"{student_name}\n{roll_number}"
 
     def _style_table(self, table, font_size):
         """Apply the same professional style to summary and activity tables."""

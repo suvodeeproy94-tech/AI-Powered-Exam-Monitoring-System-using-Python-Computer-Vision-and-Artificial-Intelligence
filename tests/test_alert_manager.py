@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from monitoring.alert_manager import AlertLevel, AlertManager, CSV_FIELDS
+from monitoring.session_manager import SessionManager
 
 
 class AlertManagerTests(unittest.TestCase):
@@ -32,6 +33,37 @@ class AlertManagerTests(unittest.TestCase):
             self.assertEqual(rows[0]["event_type"], "LOOKING_AWAY")
             self.assertIn("risk_score", rows[0])
             self.assertIn("evidence_path", rows[0])
+
+    def test_alert_can_include_exam_session_details(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            log_path = temporary_path / "activity_log.csv"
+            database_path = temporary_path / "exam_monitoring.db"
+            session_manager = SessionManager(database_path)
+            session = session_manager.create_session(
+                "Suvodeep Roy",
+                "MCA-01",
+                "Internal Exam",
+                "Artificial Intelligence",
+            )
+            manager = AlertManager(
+                log_file=log_path,
+                cooldown_seconds=0,
+                logging_enabled=True,
+            )
+            manager.set_session_manager(session_manager)
+            manager.set_current_session(session)
+
+            manager.warning("LOOKING_AWAY", "Student looked away.")
+
+            with log_path.open("r", newline="", encoding="utf-8") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+
+            self.assertEqual(rows[0]["session_id"], session.session_id)
+            self.assertEqual(rows[0]["student_name"], "Suvodeep Roy")
+            self.assertEqual(rows[0]["roll_number"], "MCA-01")
+            self.assertEqual(rows[0]["exam_name"], "Internal Exam")
+            self.assertEqual(rows[0]["subject_name"], "Artificial Intelligence")
 
     def test_cooldown_blocks_immediate_duplicate(self):
         manager = AlertManager(cooldown_seconds=60, logging_enabled=False)
