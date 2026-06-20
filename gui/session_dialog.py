@@ -13,7 +13,7 @@ class SessionDetailsDialog(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Exam Session Details")
-        self.geometry("430x360")
+        self.geometry("460x470")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -34,14 +34,14 @@ class SessionDetailsDialog(ctk.CTkToplevel):
             frame,
             text="Enter Exam Session Details",
             font=ctk.CTkFont(size=17, weight="bold"),
-        ).pack(anchor="w", padx=16, pady=(14, 4))
+        ).pack(anchor="w", padx=16, pady=(12, 4))
 
         ctk.CTkLabel(
             frame,
             text="These details will be stored with alerts and reports.",
             text_color="#94a3b8",
             font=ctk.CTkFont(size=11),
-        ).pack(anchor="w", padx=16, pady=(0, 12))
+        ).pack(anchor="w", padx=16, pady=(0, 10))
 
         fields = (
             ("student_name", "Student Name"),
@@ -55,21 +55,21 @@ class SessionDetailsDialog(ctk.CTkToplevel):
                 text=label_text,
                 text_color="#cbd5e1",
                 font=ctk.CTkFont(size=11),
-            ).pack(anchor="w", padx=16, pady=(6, 2))
+            ).pack(anchor="w", padx=16, pady=(5, 2))
             entry = ctk.CTkEntry(frame, height=34)
             entry.pack(fill="x", padx=16)
             self._entries[field_name] = entry
 
         self._error_label = ctk.CTkLabel(
             frame,
-            text="",
+            text=" ",
             text_color="#ef4444",
             font=ctk.CTkFont(size=11),
         )
         self._error_label.pack(anchor="w", padx=16, pady=(8, 0))
 
         button_row = ctk.CTkFrame(frame, fg_color="transparent")
-        button_row.pack(fill="x", padx=16, pady=(10, 14))
+        button_row.pack(fill="x", padx=16, pady=(10, 12))
 
         ctk.CTkButton(
             button_row,
