@@ -100,6 +100,12 @@ class AppSettings:
     frequent_movement_frames: int = 8
     face_cover_overlap_ratio: float = 0.25
     suspicious_gesture_frames: int = 4
+    digital_gadget_detection_enabled: bool = True
+    digital_gadget_frames: int = 5
+    digital_gadget_seconds: float = 1.0
+    digital_gadget_min_area_ratio: float = 0.012
+    digital_gadget_max_area_ratio: float = 0.25
+    digital_gadget_min_confidence: float = 0.55
     gesture_history_frames: int = 7
     gesture_stable_frames: int = 3
     gesture_majority_ratio: float = 0.60
@@ -196,6 +202,18 @@ class AppSettings:
         self.frequent_movement_frames = max(1, int(self.frequent_movement_frames))
         self.face_cover_overlap_ratio = _clamp(self.face_cover_overlap_ratio, 0.05, 1.0)
         self.suspicious_gesture_frames = max(1, int(self.suspicious_gesture_frames))
+        self.digital_gadget_frames = max(1, int(self.digital_gadget_frames))
+        self.digital_gadget_min_area_ratio = _clamp(
+            self.digital_gadget_min_area_ratio, 0.002, 0.15
+        )
+        self.digital_gadget_max_area_ratio = _clamp(
+            self.digital_gadget_max_area_ratio,
+            self.digital_gadget_min_area_ratio + 0.005,
+            0.50,
+        )
+        self.digital_gadget_min_confidence = _clamp(
+            self.digital_gadget_min_confidence, 0.20, 0.95
+        )
         self.gesture_history_frames = max(3, int(self.gesture_history_frames))
         self.gesture_stable_frames = max(
             1, min(self.gesture_history_frames, int(self.gesture_stable_frames))
@@ -223,6 +241,7 @@ class AppSettings:
             "excessive_hand_seconds",
             "frequent_movement_seconds",
             "suspicious_gesture_seconds",
+            "digital_gadget_seconds",
         )
         for duration_name in duration_names:
             duration_value = _clamp(getattr(self, duration_name), 0.1, 30.0)

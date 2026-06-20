@@ -64,6 +64,7 @@ class BehaviorMonitor:
         self.face_status = "Waiting for monitoring"
         self.hand_status = "No hands"
         self.gesture_status = "None"
+        self.gadget_status = "No gadget"
         self.alert_status = "IDLE"
         self.alert_level = AlertLevel.INFO
         self.reset_session()
@@ -96,6 +97,7 @@ class BehaviorMonitor:
             "excessive_hand_violations": 0,
             "frequent_movement_violations": 0,
             "suspicious_gesture_violations": 0,
+            "digital_gadget_violations": 0,
             "attention_frames": 0,
             "monitored_frames": 0,
             "attention_percentage": 100.0,
@@ -109,6 +111,7 @@ class BehaviorMonitor:
         face_results,
         hand_results,
         gesture_results,
+        gadget_results=None,
         current_time=None,
         frame=None,
         calibrating=False,
@@ -130,6 +133,7 @@ class BehaviorMonitor:
             self.face_status = "Calibrating camera"
             self.hand_status = "Please remain still"
             self.gesture_status = "Calibration"
+            self.gadget_status = "Calibration"
             self.alert_status = "CALIBRATING"
             self.alert_level = AlertLevel.INFO
             self._update_risk_statistics()
@@ -146,8 +150,14 @@ class BehaviorMonitor:
         fired_alerts.extend(self._check_hand_movement(hand_results))
         fired_alerts.extend(self._check_frequent_movement(face_results))
         fired_alerts.extend(self._check_suspicious_gesture(gesture_results))
+        fired_alerts.extend(self._check_digital_gadget(gadget_results or {}))
 
-        self._update_display_status(face_results, hand_results, gesture_results)
+        self._update_display_status(
+            face_results,
+            hand_results,
+            gesture_results,
+            gadget_results or {},
+        )
         self._update_risk_statistics()
         return fired_alerts
 
@@ -481,6 +491,29 @@ class BehaviorMonitor:
         )
         return self._record_violation(alert, "suspicious_gesture_violations")
 
+    def _check_digital_gadget(self, gadget_results):
+        """Alert when a phone-like digital gadget remains visible."""
+        gadget_count = gadget_results.get("gadget_count", 0)
+        confirmed = self._condition_is_confirmed(
+            "digital_gadget",
+            gadget_count > 0,
+            self.settings.digital_gadget_frames,
+            self.settings.digital_gadget_seconds,
+        )
+        if not confirmed:
+            return []
+
+        confidence_values = gadget_results.get("gadget_confidences", [])
+        best_confidence = max(confidence_values, default=0.0)
+        alert = self._fire_alert(
+            AlertLevel.WARNING,
+            "DIGITAL_GADGET_DETECTED",
+            "Possible mobile phone or digital gadget detected with "
+            f"{best_confidence:.0%} confidence.",
+            "digital_gadget",
+        )
+        return self._record_violation(alert, "digital_gadget_violations")
+
     def _update_attention_statistics(self, face_results):
         """Measure the percentage of monitored frames with normal attention."""
         self.stats["monitored_frames"] += 1
@@ -507,7 +540,13 @@ class BehaviorMonitor:
             "maximum_risk_score"
         ]
 
-    def _update_display_status(self, face_results, hand_results, gesture_results):
+    def _update_display_status(
+        self,
+        face_results,
+        hand_results,
+        gesture_results,
+        gadget_results,
+    ):
         """Prepare short status text values for the dashboard."""
         face_count = face_results.get("face_count", 0)
         if face_count == 0:
@@ -543,6 +582,16 @@ class BehaviorMonitor:
         else:
             self.gesture_status = "None"
 
+        gadget_count = gadget_results.get("gadget_count", 0)
+        if gadget_count:
+            best_confidence = max(
+                gadget_results.get("gadget_confidences", []),
+                default=0.0,
+            )
+            self.gadget_status = f"{gadget_count} gadget {best_confidence:.0%}"
+        else:
+            self.gadget_status = "No gadget"
+
         critical_conditions = ("face_missing", "multiple_faces")
         warning_conditions = (
             "face_outside",
@@ -552,6 +601,7 @@ class BehaviorMonitor:
             "excessive_hand_movement",
             "frequent_movement",
             "suspicious_gesture",
+            "digital_gadget",
         )
 
         risk_level = self.risk_engine.level()
@@ -583,6 +633,7 @@ class BehaviorMonitor:
             "face_status": self.face_status,
             "hand_status": self.hand_status,
             "gesture_status": self.gesture_status,
+            "gadget_status": self.gadget_status,
             "alert_status": self.alert_status,
             "alert_level": self.alert_level,
             "stats": dict(self.stats),

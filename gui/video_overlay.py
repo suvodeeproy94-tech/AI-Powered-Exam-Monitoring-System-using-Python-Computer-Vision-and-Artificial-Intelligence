@@ -65,10 +65,22 @@ def build_analysis_summary(face_results=None, calibration_result=None):
     )
 
 
+def build_gadget_summary(gadget_results=None):
+    """Return one short line for possible digital gadgets."""
+    if not gadget_results or not gadget_results.get("gadget_count"):
+        return "Digital gadget: none"
+
+    gadget_count = gadget_results.get("gadget_count", 0)
+    best_confidence = max(gadget_results.get("gadget_confidences", []), default=0.0)
+    label = "gadget" if gadget_count == 1 else "gadgets"
+    return f"Digital {label}: {gadget_count} possible {best_confidence:.0%}"
+
+
 def draw_monitoring_overlay(
     frame,
     face_count,
     gesture_results,
+    gadget_results=None,
     face_results=None,
     calibration_result=None,
 ):
@@ -85,6 +97,7 @@ def draw_monitoring_overlay(
 
     face_text, face_color = build_face_summary(face_count)
     gesture_text = build_gesture_summary(gesture_results)
+    gadget_text = build_gadget_summary(gadget_results)
     analysis_text = build_analysis_summary(face_results, calibration_result)
     _draw_text_with_shadow(
         frame,
@@ -104,8 +117,20 @@ def draw_monitoring_overlay(
     )
     _draw_text_with_shadow(
         frame,
-        analysis_text,
+        gadget_text,
         (start_x, start_y + line_height * 2),
+        (
+            GESTURE_COLOR
+            if gadget_results and gadget_results.get("gadget_count")
+            else (255, 255, 255)
+        ),
+        max(0.48, font_scale - 0.16),
+        1,
+    )
+    _draw_text_with_shadow(
+        frame,
+        analysis_text,
+        (start_x, start_y + line_height * 3),
         (255, 255, 255),
         max(0.48, font_scale - 0.16),
         1,

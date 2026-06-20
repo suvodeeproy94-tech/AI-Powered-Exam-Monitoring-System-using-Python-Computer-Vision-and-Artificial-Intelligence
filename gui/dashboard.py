@@ -31,6 +31,7 @@ from config import (
 )
 from detection.face_detector import FaceDetector
 from detection.frame_quality import prepare_detection_frame
+from detection.gadget_detector import GadgetDetector
 from detection.hand_detector import HandDetector
 from gui.components import AlertRow, StatusBadge
 from gui.settings_dialog import SettingsDialog
@@ -73,6 +74,7 @@ class Dashboard(ctk.CTk):
 
         self.face_detector = None
         self.hand_detector = None
+        self.gadget_detector = GadgetDetector(self.settings)
         self._capture_thread = None
         self._stop_event = threading.Event()
         self._monitoring = False
@@ -213,17 +215,18 @@ class Dashboard(ctk.CTk):
         self._stat_critical = self._create_stat_row(stats_card, 4, "Critical Alerts")
         self._stat_face = self._create_stat_row(stats_card, 5, "Face Violations")
         self._stat_gesture = self._create_stat_row(stats_card, 6, "Gesture Violations")
-        self._stat_risk = self._create_stat_row(stats_card, 7, "Current Risk Score")
-        self._stat_attention = self._create_stat_row(stats_card, 8, "Attention")
+        self._stat_gadget = self._create_stat_row(stats_card, 7, "Gadget Violations")
+        self._stat_risk = self._create_stat_row(stats_card, 8, "Current Risk Score")
+        self._stat_attention = self._create_stat_row(stats_card, 9, "Attention")
 
         ctk.CTkLabel(
             stats_card,
             text="Current Alert Status",
             text_color="#94a3b8",
             font=ctk.CTkFont(size=11),
-        ).grid(row=9, column=0, padx=10, pady=(3, 8), sticky="w")
+        ).grid(row=10, column=0, padx=10, pady=(3, 8), sticky="w")
         self._alert_badge = StatusBadge(stats_card, "IDLE", COLOR_NEUTRAL)
-        self._alert_badge.grid(row=9, column=1, padx=10, pady=(3, 8), sticky="e")
+        self._alert_badge.grid(row=10, column=1, padx=10, pady=(3, 8), sticky="e")
 
         ctk.CTkLabel(
             right_panel,
@@ -431,6 +434,12 @@ class Dashboard(ctk.CTk):
                 annotated_frame, hand_results = self.hand_detector.process_frame(
                     detection_frame, face_frame
                 )
+                annotated_frame, gadget_results = self.gadget_detector.process_frame(
+                    detection_frame,
+                    annotated_frame,
+                    face_results.get("face_bboxes", []),
+                    hand_results.get("hand_bboxes", []),
+                )
 
                 landmark_lists = [
                     self.hand_detector.get_landmark_list(
@@ -459,6 +468,7 @@ class Dashboard(ctk.CTk):
                     annotated_frame,
                     face_results["face_count"],
                     gesture_results,
+                    gadget_results,
                     face_results,
                     calibration_result,
                 )
@@ -466,6 +476,7 @@ class Dashboard(ctk.CTk):
                     face_results,
                     hand_results,
                     gesture_results,
+                    gadget_results,
                     current_time=frame_time,
                     frame=annotated_frame,
                     calibrating=not calibration_result.complete,
@@ -603,6 +614,7 @@ class Dashboard(ctk.CTk):
         self._stat_gesture.configure(
             text=str(stats["suspicious_gesture_violations"])
         )
+        self._stat_gadget.configure(text=str(stats["digital_gadget_violations"]))
         self._stat_risk.configure(text=f"{stats['risk_score']:.0f}/100")
         self._stat_attention.configure(
             text=f"{stats['attention_percentage']:.1f}%"
@@ -747,6 +759,7 @@ class Dashboard(ctk.CTk):
         self.behavior_monitor.settings = self.settings
         self.behavior_monitor.risk_engine.settings = self.settings
         self.evidence_manager.settings = self.settings
+        self.gadget_detector.settings = self.settings
         self.calibration_manager = CalibrationManager(self.settings)
         self.gesture_recognizer = MultiHandGestureRecognizer(self.settings)
         messagebox.showinfo(

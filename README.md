@@ -57,6 +57,7 @@ into small modules so each part can be explained separately during a viva.
 - YuNet face detection with automatic MediaPipe fallback
 - Continuous face counting and confidence display
 - Face edge, missing face, head turn, and movement checks
+- Phone-like digital gadget warning using local OpenCV shape detection
 - Two-hand detection with 21 landmarks per hand
 - Eight hand gesture labels with optional trained-model support
 - Personal camera, head-pose, and gaze calibration
@@ -106,7 +107,7 @@ invigilator. It records visible events so the invigilator can review them.
 | Hand Movement | Measures wrist movement relative to hand size and smooths landmark noise |
 | Gesture Recognition | Uses tested geometric rules and a trained Random Forest when available |
 | Live Video Overlay | Shows a large face-count message, gesture name, green face box, white hand bones, and red landmark points |
-| Suspicious Activity | Checks face missing, multiple faces, looking away, hand covering face, fast hand movement, suspicious gestures, face outside frame, and frequent movement |
+| Suspicious Activity | Checks face missing, multiple faces, looking away, hand covering face, fast hand movement, suspicious gestures, digital gadgets, face outside frame, and frequent movement |
 | Alerts | Shows INFO, WARNING, and CRITICAL events with cooldown control |
 | Logging | Saves date, time, event type, alert type, and description to CSV |
 | Dashboard | Shows webcam feed, current statuses, statistics, and alert history |
@@ -169,6 +170,7 @@ flowchart LR
 | GUI Layer | Starts/stops monitoring, displays frames, shows alerts, saves settings |
 | Detection Layer | Measures faces, hands, positions, landmarks, and movement |
 | Recognition Layer | Converts hand landmarks into gesture names |
+| Gadget Layer | Searches for phone-like rectangular digital devices in the frame |
 | Monitoring Layer | Confirms suspicious conditions and creates alerts |
 | Report Layer | Reads activity records and creates daily reports |
 | Configuration Layer | Stores paths, colors, thresholds, and persistent settings |
@@ -568,6 +570,7 @@ camera choices may differ between computers.
 | `EXCESSIVE_HAND_MOVEMENT` | Fast wrist movement continued across frames |
 | `FREQUENT_MOVEMENT` | Main face position changed rapidly across frames |
 | `SUSPICIOUS_GESTURE` | Phone or victory gesture remained visible |
+| `DIGITAL_GADGET_DETECTED` | A phone-like digital gadget remained visible |
 
 ## Activity Logging
 
@@ -782,6 +785,8 @@ files that need to be packaged correctly.
 - This is a monitoring assistant, not a replacement for a human invigilator.
 - Gesture recognition uses rules until enough real data is collected and a
   trained model is created locally.
+- Digital gadget detection uses local shape rules, so it needs human review and
+  may miss unusual devices or flag similar rectangular objects.
 - Poor lighting, masks, camera blur, and low-quality webcams reduce accuracy.
 - No webcam-based computer vision system can guarantee perfect detection in
   every room, camera angle, hand pose, or lighting condition.

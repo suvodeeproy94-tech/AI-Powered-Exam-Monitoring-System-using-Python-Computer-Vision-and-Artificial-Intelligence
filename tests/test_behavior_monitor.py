@@ -47,6 +47,7 @@ class BehaviorMonitorTests(unittest.TestCase):
             excessive_hand_frames=2,
             frequent_movement_frames=2,
             suspicious_gesture_frames=2,
+            digital_gadget_frames=2,
             alert_cooldown_seconds=0,
         )
         self.alert_manager = AlertManager(
@@ -137,6 +138,37 @@ class BehaviorMonitorTests(unittest.TestCase):
         self.assertIn(
             "SUSPICIOUS_GESTURE", [alert.event_type for alert in second_alerts]
         )
+
+    def test_digital_gadget_needs_two_frames(self):
+        gadget_results = {
+            "gadget_count": 1,
+            "gadget_boxes": [(260, 120, 80, 180)],
+            "gadget_confidences": [0.82],
+            "gadget_detected": True,
+        }
+
+        first_alerts = self.monitor.analyse(
+            normal_face_results(),
+            normal_hand_results(),
+            [],
+            gadget_results,
+        )
+        second_alerts = self.monitor.analyse(
+            normal_face_results(),
+            normal_hand_results(),
+            [],
+            gadget_results,
+        )
+
+        self.assertNotIn(
+            "DIGITAL_GADGET_DETECTED",
+            [alert.event_type for alert in first_alerts],
+        )
+        self.assertIn(
+            "DIGITAL_GADGET_DETECTED",
+            [alert.event_type for alert in second_alerts],
+        )
+        self.assertEqual(self.monitor.stats["digital_gadget_violations"], 1)
 
     def test_box_overlap_uses_face_area(self):
         overlap = boxes_overlap_ratio((0, 0, 100, 100), (0, 0, 50, 100))

@@ -40,6 +40,7 @@ FACE_EVENTS = {
 }
 GESTURE_EVENTS = {"SUSPICIOUS_GESTURE"}
 MOVEMENT_EVENTS = {"EXCESSIVE_HAND_MOVEMENT", "FREQUENT_MOVEMENT"}
+GADGET_EVENTS = {"DIGITAL_GADGET_DETECTED"}
 
 
 class ReportGenerator:
@@ -159,6 +160,7 @@ class ReportGenerator:
             "critical_count": critical_count,
             "face_violations": self._count_event_group(activity_rows, FACE_EVENTS),
             "gesture_violations": self._count_event_group(activity_rows, GESTURE_EVENTS),
+            "gadget_violations": self._count_event_group(activity_rows, GADGET_EVENTS),
             "movement_violations": self._count_event_group(activity_rows, MOVEMENT_EVENTS),
             "evidence_snapshots": sum(
                 1 for row in activity_rows if row["evidence_path"]

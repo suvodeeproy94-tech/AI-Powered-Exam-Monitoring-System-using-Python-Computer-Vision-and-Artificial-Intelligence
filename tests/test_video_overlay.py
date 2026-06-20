@@ -9,6 +9,7 @@ from gui.video_overlay import (
     FACE_ALERT_COLOR,
     FACE_OK_COLOR,
     build_face_summary,
+    build_gadget_summary,
     build_gesture_summary,
     draw_monitoring_overlay,
 )
@@ -48,6 +49,16 @@ class VideoOverlayTests(unittest.TestCase):
         ]
         text = build_gesture_summary(gesture_results)
         self.assertEqual(text, "Hand gesture: detecting...")
+
+    def test_gadget_summary_shows_possible_device(self):
+        text = build_gadget_summary(
+            {
+                "gadget_count": 1,
+                "gadget_confidences": [0.84],
+            }
+        )
+
+        self.assertEqual(text, "Digital gadget: 1 possible 84%")
 
     def test_overlay_draws_visible_pixels(self):
         frame = np.zeros((240, 320, 3), dtype=np.uint8)
