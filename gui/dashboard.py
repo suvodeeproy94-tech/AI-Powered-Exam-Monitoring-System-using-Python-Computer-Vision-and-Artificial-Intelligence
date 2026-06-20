@@ -209,24 +209,28 @@ class Dashboard(ctk.CTk):
             font=ctk.CTkFont(size=13, weight="bold"),
         ).grid(row=0, column=0, columnspan=2, padx=10, pady=(8, 4), sticky="w")
 
-        self._stat_frames = self._create_stat_row(stats_card, 1, "Frames Processed")
-        self._stat_violations = self._create_stat_row(stats_card, 2, "Total Violations")
-        self._stat_warnings = self._create_stat_row(stats_card, 3, "Warning Alerts")
-        self._stat_critical = self._create_stat_row(stats_card, 4, "Critical Alerts")
-        self._stat_face = self._create_stat_row(stats_card, 5, "Face Violations")
-        self._stat_gesture = self._create_stat_row(stats_card, 6, "Gesture Violations")
-        self._stat_gadget = self._create_stat_row(stats_card, 7, "Gadget Violations")
-        self._stat_risk = self._create_stat_row(stats_card, 8, "Current Risk Score")
-        self._stat_attention = self._create_stat_row(stats_card, 9, "Attention")
+        self._stat_frames = self._create_stat_tile(stats_card, 1, 0, "Frames", "0")
+        self._stat_violations = self._create_stat_tile(
+            stats_card, 1, 1, "Violations", "0"
+        )
+        self._stat_warnings = self._create_stat_tile(stats_card, 2, 0, "Warnings", "0")
+        self._stat_critical = self._create_stat_tile(stats_card, 2, 1, "Critical", "0")
+        self._stat_face = self._create_stat_tile(stats_card, 3, 0, "Face", "0")
+        self._stat_gesture = self._create_stat_tile(stats_card, 3, 1, "Gesture", "0")
+        self._stat_gadget = self._create_stat_tile(stats_card, 4, 0, "Gadget", "0")
+        self._stat_risk = self._create_stat_tile(stats_card, 4, 1, "Risk", "0")
+        self._stat_attention = self._create_stat_tile(
+            stats_card, 5, 0, "Attention", "0"
+        )
 
         ctk.CTkLabel(
             stats_card,
             text="Current Alert Status",
             text_color="#94a3b8",
             font=ctk.CTkFont(size=11),
-        ).grid(row=10, column=0, padx=10, pady=(3, 8), sticky="w")
+        ).grid(row=5, column=1, padx=10, pady=(3, 8), sticky="w")
         self._alert_badge = StatusBadge(stats_card, "IDLE", COLOR_NEUTRAL)
-        self._alert_badge.grid(row=10, column=1, padx=10, pady=(3, 8), sticky="e")
+        self._alert_badge.grid(row=5, column=1, padx=10, pady=(20, 8), sticky="e")
 
         ctk.CTkLabel(
             right_panel,
@@ -260,6 +264,26 @@ class Dashboard(ctk.CTk):
             font=ctk.CTkFont(size=11, weight="bold"),
         )
         value_label.grid(row=row, column=1, padx=10, pady=2, sticky="e")
+        return value_label
+
+    def _create_stat_tile(self, parent, row, column, label_text, initial_text):
+        """Create one compact statistics tile for the dashboard."""
+        tile = ctk.CTkFrame(parent, fg_color="transparent")
+        tile.grid(row=row, column=column, padx=10, pady=3, sticky="ew")
+        tile.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            tile,
+            text=label_text,
+            text_color="#94a3b8",
+            font=ctk.CTkFont(size=10),
+        ).grid(row=0, column=0, sticky="w")
+        value_label = ctk.CTkLabel(
+            tile,
+            text=initial_text,
+            font=ctk.CTkFont(size=13, weight="bold"),
+        )
+        value_label.grid(row=0, column=1, sticky="e")
         return value_label
 
     def _build_footer(self):
