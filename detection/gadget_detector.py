@@ -63,11 +63,8 @@ class GadgetDetector:
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blurred_frame = cv2.GaussianBlur(gray_frame, (5, 5), 0)
         edges = cv2.Canny(blurred_frame, 45, 120)
-        contours, _ = cv2.findContours(
-            edges,
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE,
-        )
+        color_mask = self._build_gadget_color_mask(frame, gray_frame)
+        contours = self._find_all_contours(edges, color_mask)
 
         frame_area = float(frame_width * frame_height)
         candidates = []
@@ -119,6 +116,40 @@ class GadgetDetector:
             )
 
         return self._deduplicate(candidates)
+
+    def _build_gadget_color_mask(self, frame, gray_frame):
+        """Build a mask for dark or strongly colored non-skin objects."""
+        hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        saturation = hsv_frame[:, :, 1]
+        value = hsv_frame[:, :, 2]
+
+        dark_mask = gray_frame <= 95
+        saturated_mask = (saturation >= 70) & (value >= 45)
+        skin_mask = self._skin_mask(frame) > 0
+        candidate_mask = np.where(
+            (dark_mask | saturated_mask) & ~skin_mask,
+            255,
+            0,
+        ).astype(np.uint8)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_CLOSE, kernel)
+        candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_OPEN, kernel)
+        return candidate_mask
+
+    def _find_all_contours(self, edges, color_mask):
+        """Return contours from both edges and color masks."""
+        edge_contours, _ = cv2.findContours(
+            edges,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        color_contours, _ = cv2.findContours(
+            color_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        return list(edge_contours) + list(color_contours)
 
     def _area_is_valid(self, area_ratio):
         """Check whether the object size is practical for a visible gadget."""
@@ -184,28 +215,47 @@ class GadgetDetector:
             return 0.0
 
         dark_ratio = float(np.mean(crop <= 95))
-        if dark_ratio < self.settings.digital_gadget_min_dark_ratio:
+        saturated_ratio = self._saturated_ratio(color_crop)
+        has_dark_body = dark_ratio >= self.settings.digital_gadget_min_dark_ratio
+        has_colored_body = (
+            saturated_ratio >= self.settings.digital_gadget_min_saturated_ratio
+        )
+        if not has_dark_body and not has_colored_body:
             return 0.0
 
         mean_brightness = float(np.mean(crop))
         contrast = float(np.std(crop))
         dark_body_score = 1.0 if mean_brightness <= 125 else 0.65
         dark_area_score = min(dark_ratio / 0.45, 1.0)
+        saturated_area_score = min(saturated_ratio / 0.60, 1.0)
         contrast_score = min(contrast / 55.0, 1.0)
         score = (
-            0.35 * dark_body_score
-            + 0.35 * dark_area_score
-            + 0.30 * contrast_score
+            0.25 * dark_body_score
+            + 0.30 * max(dark_area_score, saturated_area_score)
+            + 0.25 * contrast_score
+            + 0.20 * saturated_area_score
         )
         return max(0.0, min(1.0, score))
 
     def _skin_ratio(self, color_crop):
         """Return how much of one crop looks like skin color."""
+        skin_mask = self._skin_mask(color_crop)
+        return float(np.mean(skin_mask > 0))
+
+    def _skin_mask(self, color_crop):
+        """Return a binary mask for common skin-color pixels."""
         ycrcb_crop = cv2.cvtColor(color_crop, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-        skin_mask = cv2.inRange(ycrcb_crop, lower_skin, upper_skin)
-        return float(np.mean(skin_mask > 0))
+        return cv2.inRange(ycrcb_crop, lower_skin, upper_skin)
+
+    def _saturated_ratio(self, color_crop):
+        """Return how much of one crop has strong color saturation."""
+        hsv_crop = cv2.cvtColor(color_crop, cv2.COLOR_BGR2HSV)
+        saturation = hsv_crop[:, :, 1]
+        value = hsv_crop[:, :, 2]
+        saturated_mask = (saturation >= 70) & (value >= 45)
+        return float(np.mean(saturated_mask))
 
     def _remove_body_overlaps(self, candidates, face_boxes, hand_boxes):
         """Avoid marking the face or hand itself as a gadget."""
