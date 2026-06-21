@@ -14,7 +14,6 @@ class GadgetDetectorTests(unittest.TestCase):
 
     def test_phone_like_rectangle_is_detected(self):
         settings = AppSettings(
-            digital_gadget_min_confidence=0.45,
             digital_gadget_min_area_ratio=0.005,
         )
         detector = GadgetDetector(settings)
@@ -27,7 +26,23 @@ class GadgetDetectorTests(unittest.TestCase):
 
         self.assertEqual(results["gadget_count"], 1)
         self.assertTrue(results["gadget_detected"])
-        self.assertGreaterEqual(results["gadget_confidences"][0], 0.45)
+        self.assertGreaterEqual(results["gadget_confidences"][0], 0.72)
+
+    def test_skin_colored_rectangle_is_not_detected_as_gadget(self):
+        settings = AppSettings(
+            digital_gadget_min_area_ratio=0.005,
+        )
+        detector = GadgetDetector(settings)
+        frame = np.full((480, 640, 3), 220, dtype=np.uint8)
+
+        # This represents a skin-colored arm or shoulder shape, not a phone.
+        cv2.rectangle(frame, (250, 170), (360, 330), (70, 105, 150), -1)
+        cv2.rectangle(frame, (265, 190), (345, 310), (80, 115, 165), -1)
+
+        _, results = detector.process_frame(frame)
+
+        self.assertEqual(results["gadget_count"], 0)
+        self.assertFalse(results["gadget_detected"])
 
     def test_plain_frame_has_no_gadget(self):
         detector = GadgetDetector(AppSettings())

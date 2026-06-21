@@ -105,7 +105,10 @@ class AppSettings:
     digital_gadget_seconds: float = 1.0
     digital_gadget_min_area_ratio: float = 0.012
     digital_gadget_max_area_ratio: float = 0.25
-    digital_gadget_min_confidence: float = 0.55
+    digital_gadget_min_confidence: float = 0.72
+    digital_gadget_min_rectangular_fill: float = 0.50
+    digital_gadget_max_skin_ratio: float = 0.28
+    digital_gadget_min_dark_ratio: float = 0.18
     gesture_history_frames: int = 7
     gesture_stable_frames: int = 3
     gesture_majority_ratio: float = 0.60
@@ -213,6 +216,15 @@ class AppSettings:
         )
         self.digital_gadget_min_confidence = _clamp(
             self.digital_gadget_min_confidence, 0.20, 0.95
+        )
+        self.digital_gadget_min_rectangular_fill = _clamp(
+            self.digital_gadget_min_rectangular_fill, 0.20, 0.90
+        )
+        self.digital_gadget_max_skin_ratio = _clamp(
+            self.digital_gadget_max_skin_ratio, 0.05, 0.80
+        )
+        self.digital_gadget_min_dark_ratio = _clamp(
+            self.digital_gadget_min_dark_ratio, 0.02, 0.90
         )
         self.gesture_history_frames = max(3, int(self.gesture_history_frames))
         self.gesture_stable_frames = max(
